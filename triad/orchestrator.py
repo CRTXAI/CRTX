@@ -21,11 +21,18 @@ import time
 from triad.arbiter.arbiter import ArbiterEngine
 from triad.arbiter.feedback import format_arbiter_feedback
 from triad.arbiter.reconciler import ReconciliationEngine
+from triad.consensus.protocol import ConsensusEngine
 from triad.prompts import render_prompt
 from triad.providers.litellm_provider import LiteLLMProvider
 from triad.routing.engine import RoutingEngine
 from triad.schemas.arbiter import ArbiterReview, Verdict
-from triad.schemas.consensus import DebateResult, ParallelResult
+from triad.schemas.consensus import (
+    ConsensusResult,
+    DebateResult,
+    ParallelResult,
+    SuggestionDecision,
+    SuggestionVerdict,
+)
 from triad.schemas.messages import (
     AgentMessage,
     MessageType,
@@ -117,7 +124,10 @@ class PipelineOrchestrator:
         self._arbiter = ArbiterEngine(config, registry)
         self._reconciler = ReconciliationEngine(config, registry)
         self._router = RoutingEngine(config, registry)
+        self._consensus = ConsensusEngine(config, registry)
         self._routing_decisions: list[RoutingDecision] = []
+        self._suggestion_decisions: list[SuggestionDecision] = []
+        self._stage_models: dict[PipelineStage, str] = {}
 
     @property
     def session(self) -> list[AgentMessage]:
@@ -166,7 +176,6 @@ class PipelineOrchestrator:
 
             stages[stage] = msg
             self._session.append(msg)
-            all_suggestions.extend(msg.suggestions)
 
             # Chain output: current output becomes next stage's input
             previous_output = msg.content
@@ -179,6 +188,14 @@ class PipelineOrchestrator:
                 msg.model,
                 msg.confidence,
             )
+
+            # --- Evaluate cross-domain suggestions ---
+            accepted_suggestions = await self._evaluate_suggestions(
+                new_suggestions=msg.suggestions,
+                current_stage=stage,
+                previous_output=previous_output,
+            )
+            all_suggestions.extend(accepted_suggestions)
 
             # --- Arbiter review ---
             if stage in reviewed_stages:
@@ -359,6 +376,7 @@ class PipelineOrchestrator:
         """
         decision = self._router.select_model(stage)
         self._routing_decisions.append(decision)
+        self._stage_models[stage] = decision.model_key
         model_config = self._registry[decision.model_key]
         provider = LiteLLMProvider(model_config)
 
@@ -453,6 +471,65 @@ class PipelineOrchestrator:
             )
         return "\n".join(lines)
 
+    async def _evaluate_suggestions(
+        self,
+        new_suggestions: list[Suggestion],
+        current_stage: PipelineStage,
+        previous_output: str,
+    ) -> list[Suggestion]:
+        """Evaluate cross-domain suggestions from the current stage.
+
+        Each suggestion is evaluated by the primary role-holder for its
+        target domain. Rejected high-confidence suggestions (>0.7) are
+        escalated to a group vote. Returns only accepted suggestions.
+        """
+        if not new_suggestions:
+            return []
+
+        accepted: list[Suggestion] = []
+        pipeline_models = {
+            stage.value: key
+            for stage, key in self._stage_models.items()
+        }
+
+        for suggestion in new_suggestions:
+            # Find the primary role-holder for this suggestion's domain
+            target_model = self._stage_models.get(suggestion.domain)
+            if not target_model:
+                # Domain's model not yet assigned — accept by default
+                accepted.append(suggestion)
+                continue
+
+            decision = await self._consensus.evaluate_suggestion(
+                suggestion=suggestion,
+                evaluator_key=target_model,
+                task=self._task.task,
+                current_approach=previous_output,
+            )
+            self._suggestion_decisions.append(decision)
+
+            if decision.decision == SuggestionVerdict.ACCEPT:
+                accepted.append(suggestion)
+                continue
+
+            # Rejected — check for escalation
+            if self._consensus.should_escalate(suggestion):
+                logger.info(
+                    "Escalating high-confidence suggestion "
+                    "(confidence=%.2f) to group vote",
+                    suggestion.confidence,
+                )
+                escalation = await self._consensus.escalate_suggestion(
+                    suggestion=suggestion,
+                    pipeline_models=pipeline_models,
+                    task=self._task.task,
+                    current_approach=previous_output,
+                )
+                if escalation.decision == SuggestionVerdict.ACCEPT:
+                    accepted.append(suggestion)
+
+        return accepted
+
 
 def _extract_confidence(content: str) -> float:
     """Extract the CONFIDENCE: <value> score from model output.
@@ -545,6 +622,7 @@ class ParallelOrchestrator:
         self._config = config
         self._registry = registry
         self._arbiter = ArbiterEngine(config, registry)
+        self._consensus = ConsensusEngine(config, registry)
 
     async def run(self) -> PipelineResult:
         """Execute the parallel exploration pipeline."""
@@ -552,6 +630,7 @@ class ParallelOrchestrator:
         arbiter_reviews: list[ArbiterReview] = []
         all_messages: list[AgentMessage] = []
         timeout = self._config.default_timeout
+        consensus_result: ConsensusResult | None = None
 
         # Phase 1: Fan-out — all models produce solutions in parallel
         logger.info("Parallel fan-out: %d models", len(self._registry))
@@ -630,9 +709,14 @@ class ParallelOrchestrator:
                 key=lambda k: sum(voter_scores[k].values()),
             )
 
-        # Phase 4: Tally votes and determine winner
-        winner = self._tally_votes(votes, individual_outputs)
-        logger.info("Parallel winner: %s", winner)
+        # Phase 4: Resolve consensus with formal protocol
+        consensus_result = await self._consensus.resolve_consensus(
+            votes=votes,
+            task=self._task.task,
+            candidate_outputs=individual_outputs,
+        )
+        winner = consensus_result.winner
+        logger.info("Parallel winner: %s (method=%s)", winner, consensus_result.method)
 
         # Phase 5: Synthesis — winner enhances with best of others
         logger.info("Parallel synthesis by %s", winner)
@@ -698,35 +782,6 @@ class ParallelOrchestrator:
             ),
         )
 
-    def _tally_votes(
-        self,
-        votes: dict[str, str],
-        candidates: dict[str, str],
-    ) -> str:
-        """Tally votes and return winner. Tie -> tiebreaker model."""
-        if not votes:
-            return _get_tiebreaker_key(self._registry)
-
-        counts: dict[str, int] = {}
-        for voted_for in votes.values():
-            counts[voted_for] = counts.get(voted_for, 0) + 1
-
-        max_count = max(counts.values())
-        leaders = [k for k, c in counts.items() if c == max_count]
-
-        if len(leaders) == 1:
-            return leaders[0]
-
-        # Tie -> highest-fitness verifier among tied models
-        tiebreaker = max(
-            leaders,
-            key=lambda k: self._registry[k].fitness.verifier,
-        )
-        logger.info(
-            "Vote tie between %s, tiebreaker: %s", leaders, tiebreaker,
-        )
-        return tiebreaker
-
     async def _call_model(
         self,
         model_key: str,
@@ -783,6 +838,7 @@ class DebateOrchestrator:
         self._config = config
         self._registry = registry
         self._arbiter = ArbiterEngine(config, registry)
+        self._consensus = ConsensusEngine(config, registry)
 
     async def run(self) -> PipelineResult:
         """Execute the debate pipeline."""

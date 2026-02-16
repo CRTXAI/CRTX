@@ -12,8 +12,13 @@ from triad.schemas.arbiter import (
     Verdict,
 )
 from triad.schemas.consensus import (
+    ConsensusResult,
     DebateResult,
+    EscalationResult,
     ParallelResult,
+    SuggestionDecision,
+    SuggestionVerdict,
+    VoteTally,
 )
 from triad.schemas.messages import (
     AgentMessage,
@@ -50,9 +55,11 @@ __all__ = [
     "ArbiterMode",
     "ArbiterReview",
     "CodeBlock",
+    "ConsensusResult",
     "CostEstimate",
     "DebateResult",
     "Deviation",
+    "EscalationResult",
     "ImplementationSummary",
     "Issue",
     "IssueCategory",
@@ -70,7 +77,10 @@ __all__ = [
     "Severity",
     "StageConfig",
     "Suggestion",
+    "SuggestionDecision",
+    "SuggestionVerdict",
     "TaskSpec",
     "TokenUsage",
     "Verdict",
+    "VoteTally",
 ]

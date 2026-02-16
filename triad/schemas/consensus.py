@@ -1,13 +1,23 @@
-"""Consensus schemas for parallel exploration and debate pipeline modes.
+"""Consensus schemas for the Triad Orchestrator.
 
-Defines result types for the multi-model pipeline modes: ParallelResult
-captures fan-out, cross-review, voting, and synthesis; DebateResult
-captures proposals, rebuttals, final arguments, and judgment.
+Defines result types for multi-model pipeline modes (ParallelResult,
+DebateResult), suggestion evaluation and escalation decisions
+(SuggestionDecision, EscalationResult), vote tallying (VoteTally),
+and consensus resolution (ConsensusResult).
 """
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 from pydantic import BaseModel, Field
+
+
+class SuggestionVerdict(StrEnum):
+    """Decision on a cross-domain suggestion."""
+
+    ACCEPT = "accept"
+    REJECT = "reject"
 
 
 class ParallelResult(BaseModel):
@@ -71,4 +81,101 @@ class DebateResult(BaseModel):
     judge_model: str = Field(
         default="",
         description="Model key of the judge that rendered the decision",
+    )
+
+
+class SuggestionDecision(BaseModel):
+    """Result of a primary role-holder evaluating a cross-domain suggestion.
+
+    When an agent suggests a change in another agent's domain, the primary
+    role-holder for that domain evaluates it and issues an accept/reject.
+    """
+
+    suggestion_id: str = Field(
+        description="Unique ID of the suggestion being evaluated",
+    )
+    evaluator_model: str = Field(
+        description="Model key of the primary role-holder that evaluated",
+    )
+    decision: SuggestionVerdict = Field(
+        description="Whether the suggestion was accepted or rejected",
+    )
+    rationale: str = Field(
+        default="", description="Reasoning behind the decision",
+    )
+
+
+class EscalationResult(BaseModel):
+    """Result of escalating a rejected suggestion to a group vote.
+
+    When a high-confidence suggestion is rejected by the primary role-holder,
+    the suggester can escalate to a group vote across all pipeline models.
+    Majority wins.
+    """
+
+    suggestion_id: str = Field(
+        description="Unique ID of the escalated suggestion",
+    )
+    votes: dict[str, str] = Field(
+        default_factory=dict,
+        description="Voter model key → 'accept' or 'reject'",
+    )
+    decision: SuggestionVerdict = Field(
+        description="Final group decision on the suggestion",
+    )
+    rationale: str = Field(
+        default="", description="Summary of the group's reasoning",
+    )
+
+
+class VoteTally(BaseModel):
+    """Result of counting votes for a set of options.
+
+    Used by both parallel mode voting and suggestion escalation.
+    """
+
+    counts: dict[str, int] = Field(
+        default_factory=dict,
+        description="Option → number of votes received",
+    )
+    winner: str | None = Field(
+        default=None,
+        description="The option with the most votes, or None if tied",
+    )
+    is_tie: bool = Field(
+        default=False, description="Whether there is a tie for first place",
+    )
+    tied_options: list[str] = Field(
+        default_factory=list,
+        description="Options tied for first place (empty if no tie)",
+    )
+
+
+class ConsensusResult(BaseModel):
+    """Result of a formal consensus resolution.
+
+    Used when multiple models must agree on a winner — in parallel mode
+    voting, debate judgment ties, or suggestion escalation.
+    """
+
+    method: str = Field(
+        description="How consensus was reached: 'majority', 'tiebreak', or 'unanimous'",
+    )
+    winner: str = Field(
+        description="The winning option (model key or suggestion decision)",
+    )
+    votes: dict[str, str] = Field(
+        default_factory=dict,
+        description="Voter → voted-for option",
+    )
+    tiebreaker_used: bool = Field(
+        default=False,
+        description="Whether a tiebreaker was needed to resolve",
+    )
+    tiebreaker_model: str | None = Field(
+        default=None,
+        description="Model key of the tiebreaker, if used",
+    )
+    rationale: str = Field(
+        default="", description="Explanation of the consensus outcome",
     )

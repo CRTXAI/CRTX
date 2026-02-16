@@ -26,6 +26,7 @@ from triad.schemas.pipeline import (
 
 # Patch targets
 _PROVIDER = "triad.orchestrator.LiteLLMProvider"
+_CONSENSUS_PROVIDER = "triad.consensus.protocol.LiteLLMProvider"
 _ARBITER_REVIEW = "triad.orchestrator.ArbiterEngine.review"
 
 
@@ -291,7 +292,7 @@ class TestParallelVoting:
         assert pr.winner == "model-a"
 
     async def test_tie_goes_to_tiebreaker(self):
-        """If votes are tied, highest-fitness verifier wins."""
+        """If votes are tied, consensus tiebreaker resolves."""
         registry = {
             "model-a": _make_model_config(
                 model="a-v1",
@@ -315,8 +316,18 @@ class TestParallelVoting:
 
         mock_cls, _ = _mock_provider(fan_out + reviews + synthesis)
 
+        # Tiebreaker response via consensus protocol
+        tiebreak_msg = _make_agent_message(
+            "WINNER: model-b\n\nREASONING: Better approach.",
+        )
+        consensus_mock_cls = MagicMock()
+        consensus_mock_inst = MagicMock()
+        consensus_mock_cls.return_value = consensus_mock_inst
+        consensus_mock_inst.complete = AsyncMock(return_value=tiebreak_msg)
+
         with (
             patch(_PROVIDER, mock_cls),
+            patch(_CONSENSUS_PROVIDER, consensus_mock_cls),
             patch(_ARBITER_REVIEW, AsyncMock(return_value=_make_approve_review())),
         ):
             orch = ParallelOrchestrator(
@@ -328,7 +339,7 @@ class TestParallelVoting:
             )
             result = await orch.run()
 
-        # model-b has higher verifier fitness → tiebreaker
+        # model-b selected by consensus tiebreaker
         assert result.parallel_result.winner == "model-b"
 
 
