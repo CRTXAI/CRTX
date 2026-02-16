@@ -1,0 +1,204 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="800" height="800">
+  <defs>
+    <radialGradient id="bgR" cx="50%" cy="48%" r="55%">
+      <stop offset="0%" stop-color="#060d06"/>
+      <stop offset="100%" stop-color="#020402"/>
+    </radialGradient>
+    <pattern id="dotsR" width="28" height="28" patternUnits="userSpaceOnUse">
+      <circle cx="14" cy="14" r="0.35" fill="#0d1a0d" opacity="0.55"/>
+    </pattern>
+    <filter id="gR" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="6"/>
+      <feComposite in="SourceGraphic"/>
+    </filter>
+    <filter id="gR2" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="12" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="gR3" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="22" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+
+    <radialGradient id="nR1" cx="45%" cy="38%" r="55%">
+      <stop offset="0%" stop-color="#00ffbb"/><stop offset="100%" stop-color="#00cc99"/>
+    </radialGradient>
+    <radialGradient id="nR2" cx="45%" cy="38%" r="55%">
+      <stop offset="0%" stop-color="#00ff66"/><stop offset="100%" stop-color="#00cc44"/>
+    </radialGradient>
+    <radialGradient id="nR3" cx="45%" cy="38%" r="55%">
+      <stop offset="0%" stop-color="#66ff88"/><stop offset="100%" stop-color="#44dd66"/>
+    </radialGradient>
+
+    <linearGradient id="lR1" x1="400" y1="165" x2="400" y2="405" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00ffbb" stop-opacity="1"/>
+      <stop offset="35%" stop-color="#00ddaa" stop-opacity="0.65"/>
+      <stop offset="100%" stop-color="#00ffbb" stop-opacity="0.05"/>
+    </linearGradient>
+    <linearGradient id="lR2" x1="200" y1="545" x2="385" y2="415" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00ff66" stop-opacity="1"/>
+      <stop offset="35%" stop-color="#00dd55" stop-opacity="0.65"/>
+      <stop offset="100%" stop-color="#00ff66" stop-opacity="0.05"/>
+    </linearGradient>
+    <linearGradient id="lR3" x1="600" y1="545" x2="415" y2="415" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#66ff88" stop-opacity="1"/>
+      <stop offset="35%" stop-color="#44dd66" stop-opacity="0.65"/>
+      <stop offset="100%" stop-color="#66ff88" stop-opacity="0.05"/>
+    </linearGradient>
+
+    <linearGradient id="eR1" x1="400" y1="165" x2="200" y2="545" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00ffbb" stop-opacity="0.5"/>
+      <stop offset="50%" stop-color="#00cc88" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#00ff66" stop-opacity="0.5"/>
+    </linearGradient>
+    <linearGradient id="eR2" x1="200" y1="545" x2="600" y2="545" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00ff66" stop-opacity="0.5"/>
+      <stop offset="50%" stop-color="#33dd66" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#66ff88" stop-opacity="0.5"/>
+    </linearGradient>
+    <linearGradient id="eR3" x1="600" y1="545" x2="400" y2="165" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#66ff88" stop-opacity="0.5"/>
+      <stop offset="50%" stop-color="#33dd88" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#00ffbb" stop-opacity="0.5"/>
+    </linearGradient>
+
+    <radialGradient id="arbR" cx="50%" cy="42%" r="50%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="25%" stop-color="#aaffdd"/>
+      <stop offset="60%" stop-color="#00ff88"/>
+      <stop offset="100%" stop-color="#00cc66"/>
+    </radialGradient>
+    <radialGradient id="arbRG" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#00ff99" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#00ff99" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="tfR" x1="400" y1="165" x2="400" y2="545" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00ffbb" stop-opacity="0.025"/>
+      <stop offset="100%" stop-color="#00ff66" stop-opacity="0.055"/>
+    </linearGradient>
+
+    <!-- Rotating ring dasharray -->
+    <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00ff88" stop-opacity="0.6"/>
+      <stop offset="50%" stop-color="#00ff88" stop-opacity="0.1"/>
+      <stop offset="100%" stop-color="#00ff88" stop-opacity="0.6"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="800" height="800" fill="url(#bgR)"/>
+  <rect width="800" height="800" fill="url(#dotsR)" opacity="0.4"/>
+  <circle cx="400" cy="405" r="260" fill="url(#arbRG)" opacity="0.45"/>
+
+  <polygon points="400,165 200,545 600,545" fill="url(#tfR)"/>
+
+  <!-- Triangle edges -->
+  <line x1="400" y1="165" x2="200" y2="545" stroke="url(#eR1)" stroke-width="1.5"/>
+  <line x1="200" y1="545" x2="600" y2="545" stroke="url(#eR2)" stroke-width="1.5"/>
+  <line x1="600" y1="545" x2="400" y2="165" stroke="url(#eR3)" stroke-width="1.5"/>
+
+  <!-- Connection lines -->
+  <line x1="400" y1="165" x2="400" y2="405" stroke="url(#lR1)" stroke-width="3" stroke-linecap="round"/>
+  <line x1="200" y1="545" x2="400" y2="405" stroke="url(#lR2)" stroke-width="3" stroke-linecap="round"/>
+  <line x1="600" y1="545" x2="400" y2="405" stroke="url(#lR3)" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- Particles — 3 per line, staggered -->
+  <circle r="3" fill="#00ffbb" filter="url(#gR)">
+    <animate attributeName="cx" values="400;400" dur="2s" repeatCount="indefinite"/>
+    <animate attributeName="cy" values="185;388" dur="2s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="1;0.4;0" dur="2s" repeatCount="indefinite"/>
+  </circle>
+  <circle r="2" fill="#00ffbb" filter="url(#gR)">
+    <animate attributeName="cx" values="400;400" dur="2s" begin="0.65s" repeatCount="indefinite"/>
+    <animate attributeName="cy" values="185;388" dur="2s" begin="0.65s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.7;0.3;0" dur="2s" begin="0.65s" repeatCount="indefinite"/>
+  </circle>
+  <circle r="1.5" fill="#00ffbb" filter="url(#gR)">
+    <animate attributeName="cx" values="400;400" dur="2s" begin="1.3s" repeatCount="indefinite"/>
+    <animate attributeName="cy" values="185;388" dur="2s" begin="1.3s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.5;0.15;0" dur="2s" begin="1.3s" repeatCount="indefinite"/>
+  </circle>
+
+  <circle r="3" fill="#00ff66" filter="url(#gR)">
+    <animate attributeName="cx" values="214;388" dur="2.3s" repeatCount="indefinite"/>
+    <animate attributeName="cy" values="535;412" dur="2.3s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="1;0.4;0" dur="2.3s" repeatCount="indefinite"/>
+  </circle>
+  <circle r="2" fill="#00ff66" filter="url(#gR)">
+    <animate attributeName="cx" values="214;388" dur="2.3s" begin="0.75s" repeatCount="indefinite"/>
+    <animate attributeName="cy" values="535;412" dur="2.3s" begin="0.75s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.7;0.3;0" dur="2.3s" begin="0.75s" repeatCount="indefinite"/>
+  </circle>
+  <circle r="1.5" fill="#00ff66" filter="url(#gR)">
+    <animate attributeName="cx" values="214;388" dur="2.3s" begin="1.5s" repeatCount="indefinite"/>
+    <animate attributeName="cy" values="535;412" dur="2.3s" begin="1.5s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.5;0.15;0" dur="2.3s" begin="1.5s" repeatCount="indefinite"/>
+  </circle>
+
+  <circle r="3" fill="#66ff88" filter="url(#gR)">
+    <animate attributeName="cx" values="586;412" dur="2.1s" repeatCount="indefinite"/>
+    <animate attributeName="cy" values="535;412" dur="2.1s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="1;0.4;0" dur="2.1s" repeatCount="indefinite"/>
+  </circle>
+  <circle r="2" fill="#66ff88" filter="url(#gR)">
+    <animate attributeName="cx" values="586;412" dur="2.1s" begin="0.7s" repeatCount="indefinite"/>
+    <animate attributeName="cy" values="535;412" dur="2.1s" begin="0.7s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.7;0.3;0" dur="2.1s" begin="0.7s" repeatCount="indefinite"/>
+  </circle>
+  <circle r="1.5" fill="#66ff88" filter="url(#gR)">
+    <animate attributeName="cx" values="586;412" dur="2.1s" begin="1.4s" repeatCount="indefinite"/>
+    <animate attributeName="cy" values="535;412" dur="2.1s" begin="1.4s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.5;0.15;0" dur="2.1s" begin="1.4s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- Corner nodes — distinct colors -->
+  <!-- Mint (top) -->
+  <circle cx="400" cy="165" r="22" fill="url(#nR1)" filter="url(#gR2)" opacity="0.95"/>
+  <circle cx="400" cy="165" r="13" fill="#020402" opacity="0.65"/>
+  <circle cx="400" cy="165" r="7" fill="#00ffbb" opacity="0.9"/>
+
+  <!-- Emerald (bottom-left) -->
+  <circle cx="200" cy="545" r="22" fill="url(#nR2)" filter="url(#gR2)" opacity="0.95"/>
+  <circle cx="200" cy="545" r="13" fill="#020402" opacity="0.65"/>
+  <circle cx="200" cy="545" r="7" fill="#00ff66" opacity="0.9"/>
+
+  <!-- Lime (bottom-right) -->
+  <circle cx="600" cy="545" r="22" fill="url(#nR3)" filter="url(#gR2)" opacity="0.95"/>
+  <circle cx="600" cy="545" r="13" fill="#020402" opacity="0.65"/>
+  <circle cx="600" cy="545" r="7" fill="#66ff88" opacity="0.9"/>
+
+  <!-- Arbiter — refined ring system -->
+  <!-- Outermost ambient ring -->
+  <circle cx="400" cy="405" r="52" fill="none" stroke="#00ff99" stroke-width="0.6" opacity="0.08" filter="url(#gR3)"/>
+  <!-- Dashed orbit ring — suggests active scanning -->
+  <circle cx="400" cy="405" r="44" fill="none" stroke="#00ff88" stroke-width="1" stroke-dasharray="6 10" opacity="0.2" filter="url(#gR2)">
+    <animateTransform attributeName="transform" type="rotate" from="0 400 405" to="360 400 405" dur="20s" repeatCount="indefinite"/>
+  </circle>
+  <!-- Solid inner ring -->
+  <circle cx="400" cy="405" r="35" fill="none" stroke="#00ff88" stroke-width="1.5" opacity="0.35" filter="url(#gR2)"/>
+  <!-- Arbiter body -->
+  <circle cx="400" cy="405" r="26" fill="url(#arbR)" filter="url(#gR2)" opacity="0.95"/>
+  <!-- Dark center -->
+  <circle cx="400" cy="405" r="14" fill="#020402" opacity="0.55"/>
+  <!-- White-hot core -->
+  <circle cx="400" cy="405" r="8" fill="#ccffee" opacity="0.95" filter="url(#gR)"/>
+  <!-- Tiny inner spark -->
+  <circle cx="400" cy="405" r="3" fill="#ffffff" opacity="0.8"/>
+
+  <!-- Triple expanding pulse -->
+  <circle cx="400" cy="405" r="26" fill="none" stroke="#00ffaa" stroke-width="1.5" opacity="0">
+    <animate attributeName="r" values="26;55" dur="2.8s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.5;0" dur="2.8s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="400" cy="405" r="26" fill="none" stroke="#00ff88" stroke-width="1" opacity="0">
+    <animate attributeName="r" values="26;68" dur="2.8s" begin="0.9s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.3;0" dur="2.8s" begin="0.9s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="400" cy="405" r="26" fill="none" stroke="#00ff66" stroke-width="0.7" opacity="0">
+    <animate attributeName="r" values="26;80" dur="2.8s" begin="1.8s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.15;0" dur="2.8s" begin="1.8s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- Wordmark -->
+  <text x="400" y="690" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="50" font-weight="700" letter-spacing="20" fill="#00ffaa" opacity="0.9">TRIAD</text>
+  <text x="400" y="725" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="13" font-weight="400" letter-spacing="8" fill="#00cc88" opacity="0.45">ORCHESTRATOR</text>
+</svg>

@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "triad-orchestrator"
+version = "0.1.0"
+description = "Multi-model AI orchestration platform with adversarial Arbiter review"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+authors = [
+    { name = "NexusAI" },
+]
+keywords = ["ai", "llm", "orchestrator", "multi-model", "pipeline"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "License :: OSI Approved :: Apache Software License",
+    "Topic :: Software Development :: Code Generators",
+]
+dependencies = [
+    "litellm>=1.55",
+    "pydantic>=2.0",
+    "typer>=0.12",
+    "rich>=13.0",
+    "tomli>=2.0",
+    "aiofiles>=24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+triad = "triad.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["triad"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -1,0 +1,162 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" width="1200" height="400">
+  <defs>
+    <radialGradient id="bgW" cx="35%" cy="50%" r="60%">
+      <stop offset="0%" stop-color="#060d06"/>
+      <stop offset="100%" stop-color="#020402"/>
+    </radialGradient>
+    <pattern id="dotsW" width="24" height="24" patternUnits="userSpaceOnUse">
+      <circle cx="12" cy="12" r="0.3" fill="#0d1a0d" opacity="0.5"/>
+    </pattern>
+    <filter id="gW" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="4"/>
+      <feComposite in="SourceGraphic"/>
+    </filter>
+    <filter id="gW2" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="8" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="gW3" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="14" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+
+    <radialGradient id="nW1" cx="45%" cy="38%" r="55%">
+      <stop offset="0%" stop-color="#00ffbb"/><stop offset="100%" stop-color="#00cc99"/>
+    </radialGradient>
+    <radialGradient id="nW2" cx="45%" cy="38%" r="55%">
+      <stop offset="0%" stop-color="#00ff66"/><stop offset="100%" stop-color="#00cc44"/>
+    </radialGradient>
+    <radialGradient id="nW3" cx="45%" cy="38%" r="55%">
+      <stop offset="0%" stop-color="#66ff88"/><stop offset="100%" stop-color="#44dd66"/>
+    </radialGradient>
+
+    <!-- Triangle center at 220, 205 -->
+    <linearGradient id="lW1" x1="220" y1="55" x2="220" y2="210" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00ffbb" stop-opacity="1"/>
+      <stop offset="40%" stop-color="#00ddaa" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#00ffbb" stop-opacity="0.05"/>
+    </linearGradient>
+    <linearGradient id="lW2" x1="90" y1="325" x2="210" y2="215" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00ff66" stop-opacity="1"/>
+      <stop offset="40%" stop-color="#00dd55" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#00ff66" stop-opacity="0.05"/>
+    </linearGradient>
+    <linearGradient id="lW3" x1="350" y1="325" x2="230" y2="215" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#66ff88" stop-opacity="1"/>
+      <stop offset="40%" stop-color="#44dd66" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#66ff88" stop-opacity="0.05"/>
+    </linearGradient>
+
+    <linearGradient id="eW1" x1="220" y1="55" x2="90" y2="325" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00ffbb" stop-opacity="0.4"/>
+      <stop offset="50%" stop-color="#00cc88" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#00ff66" stop-opacity="0.4"/>
+    </linearGradient>
+    <linearGradient id="eW2" x1="90" y1="325" x2="350" y2="325" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00ff66" stop-opacity="0.4"/>
+      <stop offset="50%" stop-color="#33dd66" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#66ff88" stop-opacity="0.4"/>
+    </linearGradient>
+    <linearGradient id="eW3" x1="350" y1="325" x2="220" y2="55" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#66ff88" stop-opacity="0.4"/>
+      <stop offset="50%" stop-color="#33dd88" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#00ffbb" stop-opacity="0.4"/>
+    </linearGradient>
+
+    <radialGradient id="arbW" cx="50%" cy="42%" r="50%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="30%" stop-color="#88ffcc"/>
+      <stop offset="70%" stop-color="#00ff88"/>
+      <stop offset="100%" stop-color="#00cc66"/>
+    </radialGradient>
+    <radialGradient id="arbWG" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#00ff99" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#00ff99" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="tfW" x1="220" y1="55" x2="220" y2="325" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00ffbb" stop-opacity="0.02"/>
+      <stop offset="100%" stop-color="#00ff66" stop-opacity="0.05"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="400" fill="url(#bgW)"/>
+  <rect width="1200" height="400" fill="url(#dotsW)" opacity="0.35"/>
+
+  <!-- Logo section (left third) -->
+  <circle cx="220" cy="210" r="150" fill="url(#arbWG)" opacity="0.4"/>
+  <polygon points="220,55 90,325 350,325" fill="url(#tfW)"/>
+
+  <line x1="220" y1="55" x2="90" y2="325" stroke="url(#eW1)" stroke-width="1.2"/>
+  <line x1="90" y1="325" x2="350" y2="325" stroke="url(#eW2)" stroke-width="1.2"/>
+  <line x1="350" y1="325" x2="220" y2="55" stroke="url(#eW3)" stroke-width="1.2"/>
+
+  <line x1="220" y1="55" x2="220" y2="210" stroke="url(#lW1)" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="90" y1="325" x2="220" y2="210" stroke="url(#lW2)" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="350" y1="325" x2="220" y2="210" stroke="url(#lW3)" stroke-width="2.5" stroke-linecap="round"/>
+
+  <!-- Particles -->
+  <circle r="2" fill="#00ffbb" filter="url(#gW)">
+    <animate attributeName="cx" values="220;220" dur="2s" repeatCount="indefinite"/>
+    <animate attributeName="cy" values="72;198" dur="2s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="1;0.3;0" dur="2s" repeatCount="indefinite"/>
+  </circle>
+  <circle r="2" fill="#00ff66" filter="url(#gW)">
+    <animate attributeName="cx" values="100;212" dur="2.3s" repeatCount="indefinite"/>
+    <animate attributeName="cy" values="317;215" dur="2.3s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="1;0.3;0" dur="2.3s" repeatCount="indefinite"/>
+  </circle>
+  <circle r="2" fill="#66ff88" filter="url(#gW)">
+    <animate attributeName="cx" values="340;228" dur="2.1s" repeatCount="indefinite"/>
+    <animate attributeName="cy" values="317;215" dur="2.1s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="1;0.3;0" dur="2.1s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- Nodes -->
+  <circle cx="220" cy="55" r="14" fill="url(#nW1)" filter="url(#gW2)" opacity="0.95"/>
+  <circle cx="220" cy="55" r="8" fill="#020402" opacity="0.65"/>
+  <circle cx="220" cy="55" r="4.5" fill="#00ffbb" opacity="0.9"/>
+
+  <circle cx="90" cy="325" r="14" fill="url(#nW2)" filter="url(#gW2)" opacity="0.95"/>
+  <circle cx="90" cy="325" r="8" fill="#020402" opacity="0.65"/>
+  <circle cx="90" cy="325" r="4.5" fill="#00ff66" opacity="0.9"/>
+
+  <circle cx="350" cy="325" r="14" fill="url(#nW3)" filter="url(#gW2)" opacity="0.95"/>
+  <circle cx="350" cy="325" r="8" fill="#020402" opacity="0.65"/>
+  <circle cx="350" cy="325" r="4.5" fill="#66ff88" opacity="0.9"/>
+
+  <!-- Arbiter -->
+  <circle cx="220" cy="210" r="35" fill="none" stroke="#00ff99" stroke-width="0.6" opacity="0.1" filter="url(#gW3)"/>
+  <circle cx="220" cy="210" r="26" fill="none" stroke="#00ff88" stroke-width="1.2" opacity="0.28" filter="url(#gW2)"/>
+  <circle cx="220" cy="210" r="19" fill="url(#arbW)" filter="url(#gW2)" opacity="0.95"/>
+  <circle cx="220" cy="210" r="10.5" fill="#020402" opacity="0.6"/>
+  <circle cx="220" cy="210" r="5.5" fill="#ccffee" opacity="0.95" filter="url(#gW)"/>
+
+  <circle cx="220" cy="210" r="19" fill="none" stroke="#00ffaa" stroke-width="1.2" opacity="0">
+    <animate attributeName="r" values="19;38" dur="2.5s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.45;0" dur="2.5s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="220" cy="210" r="19" fill="none" stroke="#00ff88" stroke-width="0.8" opacity="0">
+    <animate attributeName="r" values="19;48" dur="2.5s" begin="0.8s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.25;0" dur="2.5s" begin="0.8s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- Text section (right portion) -->
+  <text x="500" y="170" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="72" font-weight="700" letter-spacing="14" fill="#00ffaa" opacity="0.92">TRIAD</text>
+  <text x="503" y="215" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="16" font-weight="400" letter-spacing="10" fill="#00cc88" opacity="0.5">ORCHESTRATOR</text>
+
+  <!-- Tagline -->
+  <text x="503" y="275" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="18" font-weight="400" letter-spacing="1" fill="#00dd77" opacity="0.6">Any model. Any role. The protocol is the product.</text>
+
+  <!-- Separator line -->
+  <line x1="500" y1="232" x2="920" y2="232" stroke="#00ff88" stroke-width="0.5" opacity="0.15"/>
+
+  <!-- Subtle descriptor badges -->
+  <rect x="500" y="305" width="100" height="24" rx="4" fill="none" stroke="#00ffbb" stroke-width="0.8" opacity="0.3"/>
+  <text x="550" y="321" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="10" font-weight="400" letter-spacing="2" fill="#00ffbb" opacity="0.6">CONSENSUS</text>
+
+  <rect x="616" y="305" width="80" height="24" rx="4" fill="none" stroke="#00ff66" stroke-width="0.8" opacity="0.3"/>
+  <text x="656" y="321" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="10" font-weight="400" letter-spacing="2" fill="#00ff66" opacity="0.6">ARBITER</text>
+
+  <rect x="712" y="305" width="110" height="24" rx="4" fill="none" stroke="#66ff88" stroke-width="0.8" opacity="0.3"/>
+  <text x="767" y="321" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="10" font-weight="400" letter-spacing="2" fill="#66ff88" opacity="0.6">MULTI-MODEL</text>
+</svg>

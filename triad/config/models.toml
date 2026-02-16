@@ -1,0 +1,184 @@
+# Triad Orchestrator — Model Registry
+# Each entry configures a model for use in the pipeline via LiteLLM.
+# Adding a new model = adding a new [models.<name>] section.
+
+# ─── Anthropic ───────────────────────────────────────────────
+
+[models.claude-opus]
+provider = "anthropic"
+model = "claude-opus-4-6"
+display_name = "Claude Opus 4.6"
+api_key_env = "ANTHROPIC_API_KEY"
+context_window = 200000
+supports_tools = true
+supports_structured = true
+supports_vision = true
+supports_thinking = true
+cost_input = 15.00
+cost_output = 75.00
+
+[models.claude-opus.fitness]
+architect = 0.85
+implementer = 0.80
+refactorer = 0.95
+verifier = 0.90
+
+[models.claude-sonnet]
+provider = "anthropic"
+model = "claude-sonnet-4-5-20250929"
+display_name = "Claude Sonnet 4.5"
+api_key_env = "ANTHROPIC_API_KEY"
+context_window = 200000
+supports_tools = true
+supports_structured = true
+supports_vision = true
+supports_thinking = true
+cost_input = 3.00
+cost_output = 15.00
+
+[models.claude-sonnet.fitness]
+architect = 0.80
+implementer = 0.85
+refactorer = 0.90
+verifier = 0.85
+
+[models.claude-haiku]
+provider = "anthropic"
+model = "claude-haiku-4-5-20251001"
+display_name = "Claude Haiku 4.5"
+api_key_env = "ANTHROPIC_API_KEY"
+context_window = 200000
+supports_tools = true
+supports_structured = true
+supports_vision = true
+supports_thinking = false
+cost_input = 0.80
+cost_output = 4.00
+
+[models.claude-haiku.fitness]
+architect = 0.65
+implementer = 0.70
+refactorer = 0.75
+verifier = 0.70
+
+# ─── OpenAI ──────────────────────────────────────────────────
+
+[models.gpt-4o]
+provider = "openai"
+model = "gpt-4o"
+display_name = "GPT-4o"
+api_key_env = "OPENAI_API_KEY"
+context_window = 128000
+supports_tools = true
+supports_structured = true
+supports_vision = true
+supports_thinking = false
+cost_input = 2.50
+cost_output = 10.00
+
+[models.gpt-4o.fitness]
+architect = 0.75
+implementer = 0.85
+refactorer = 0.75
+verifier = 0.80
+
+[models.o3-mini]
+provider = "openai"
+model = "o3-mini"
+display_name = "o3-mini"
+api_key_env = "OPENAI_API_KEY"
+context_window = 200000
+supports_tools = true
+supports_structured = true
+supports_vision = false
+supports_thinking = true
+cost_input = 1.10
+cost_output = 4.40
+
+[models.o3-mini.fitness]
+architect = 0.70
+implementer = 0.75
+refactorer = 0.70
+verifier = 0.75
+
+# ─── Google ──────────────────────────────────────────────────
+
+[models.gemini-pro]
+provider = "google"
+model = "gemini/gemini-2.5-pro-preview-06-05"
+display_name = "Gemini 2.5 Pro"
+api_key_env = "GEMINI_API_KEY"
+context_window = 1048576
+supports_tools = true
+supports_structured = true
+supports_vision = true
+supports_thinking = true
+cost_input = 1.25
+cost_output = 10.00
+
+[models.gemini-pro.fitness]
+architect = 0.90
+implementer = 0.80
+refactorer = 0.80
+verifier = 0.85
+
+[models.gemini-flash]
+provider = "google"
+model = "gemini/gemini-2.5-flash-preview-05-20"
+display_name = "Gemini 2.5 Flash"
+api_key_env = "GEMINI_API_KEY"
+context_window = 1048576
+supports_tools = true
+supports_structured = true
+supports_vision = true
+supports_thinking = true
+cost_input = 0.15
+cost_output = 0.60
+
+[models.gemini-flash.fitness]
+architect = 0.70
+implementer = 0.75
+refactorer = 0.70
+verifier = 0.70
+
+# ─── xAI ─────────────────────────────────────────────────────
+
+[models.grok-4]
+provider = "xai"
+model = "xai/grok-4-0709"
+display_name = "Grok 4"
+api_key_env = "XAI_API_KEY"
+api_base = "https://api.x.ai/v1"
+context_window = 131072
+supports_tools = true
+supports_structured = true
+supports_vision = true
+supports_thinking = true
+cost_input = 3.00
+cost_output = 15.00
+
+[models.grok-4.fitness]
+architect = 0.80
+implementer = 0.80
+refactorer = 0.80
+verifier = 0.85
+
+[models.grok-3]
+provider = "xai"
+model = "xai/grok-3"
+display_name = "Grok 3"
+api_key_env = "XAI_API_KEY"
+api_base = "https://api.x.ai/v1"
+context_window = 131072
+supports_tools = true
+supports_structured = true
+supports_vision = false
+supports_thinking = false
+cost_input = 3.00
+cost_output = 15.00
+
+[models.grok-3.fitness]
+architect = 0.70
+implementer = 0.75
+refactorer = 0.70
+verifier = 0.75
