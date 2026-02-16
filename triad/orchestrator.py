@@ -17,6 +17,8 @@ import asyncio
 import logging
 import re
 import time
+import uuid
+from datetime import UTC, datetime
 
 from triad.arbiter.arbiter import ArbiterEngine
 from triad.arbiter.feedback import format_arbiter_feedback
@@ -48,6 +50,7 @@ from triad.schemas.pipeline import (
     TaskSpec,
 )
 from triad.schemas.routing import RoutingDecision
+from triad.schemas.session import SessionRecord, StageRecord
 
 logger = logging.getLogger(__name__)
 
@@ -1086,10 +1089,76 @@ async def run_pipeline(
     """Dispatch to the appropriate pipeline mode and return a result.
 
     Routes to PipelineOrchestrator (sequential), ParallelOrchestrator,
-    or DebateOrchestrator based on config.pipeline_mode.
+    or DebateOrchestrator based on config.pipeline_mode. When session
+    persistence is enabled, saves the run to SQLite.
     """
+    session_id = str(uuid.uuid4())
+    started_at = datetime.now(UTC)
+
     if config.pipeline_mode == PipelineMode.PARALLEL:
-        return await ParallelOrchestrator(task, config, registry).run()
-    if config.pipeline_mode == PipelineMode.DEBATE:
-        return await DebateOrchestrator(task, config, registry).run()
-    return await PipelineOrchestrator(task, config, registry).run()
+        result = await ParallelOrchestrator(task, config, registry).run()
+    elif config.pipeline_mode == PipelineMode.DEBATE:
+        result = await DebateOrchestrator(task, config, registry).run()
+    else:
+        result = await PipelineOrchestrator(task, config, registry).run()
+
+    result.session_id = session_id
+
+    # Persist session if enabled
+    if config.persist_sessions:
+        await _save_session(result, started_at)
+
+    return result
+
+
+async def _save_session(result: PipelineResult, started_at: datetime) -> None:
+    """Build a SessionRecord from the PipelineResult and persist it."""
+    from triad.persistence.database import close_db, init_db
+    from triad.persistence.session import SessionStore
+
+    completed_at = datetime.now(UTC)
+
+    # Convert stage AgentMessages to StageRecords
+    stage_records: list[StageRecord] = []
+    for stage, msg in result.stages.items():
+        stage_records.append(StageRecord(
+            stage=stage.value,
+            model_key=msg.model,
+            model_id=msg.model,
+            content=msg.content,
+            confidence=msg.confidence,
+            cost=msg.token_usage.cost if msg.token_usage else 0.0,
+            tokens=(
+                (msg.token_usage.prompt_tokens + msg.token_usage.completion_tokens)
+                if msg.token_usage
+                else 0
+            ),
+            timestamp=msg.timestamp.isoformat(),
+        ))
+
+    record = SessionRecord(
+        session_id=result.session_id,
+        task=result.task,
+        config=result.config,
+        stages=stage_records,
+        arbiter_reviews=result.arbiter_reviews,
+        routing_decisions=result.routing_decisions,
+        started_at=started_at,
+        completed_at=completed_at,
+        success=result.success,
+        halted=result.halted,
+        halt_reason=result.halt_reason,
+        total_cost=result.total_cost,
+        total_tokens=result.total_tokens,
+        duration_seconds=result.duration_seconds,
+        pipeline_mode=result.config.pipeline_mode.value,
+    )
+
+    try:
+        db = await init_db(result.config.session_db_path)
+        store = SessionStore(db)
+        await store.save_session(record)
+        await close_db(db)
+        logger.info("Session %s persisted", result.session_id)
+    except Exception:
+        logger.exception("Failed to persist session %s", result.session_id)

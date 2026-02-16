@@ -474,7 +474,10 @@ class TestModeDispatch:
 
             await run_pipeline(
                 _make_task(),
-                PipelineConfig(pipeline_mode="sequential", arbiter_mode="off"),
+                PipelineConfig(
+                    pipeline_mode="sequential", arbiter_mode="off",
+                    persist_sessions=False,
+                ),
                 _make_three_model_registry(),
             )
             mock_orch_cls.assert_called_once()
@@ -489,7 +492,10 @@ class TestModeDispatch:
 
             await run_pipeline(
                 _make_task(),
-                PipelineConfig(pipeline_mode="parallel", arbiter_mode="off"),
+                PipelineConfig(
+                    pipeline_mode="parallel", arbiter_mode="off",
+                    persist_sessions=False,
+                ),
                 _make_three_model_registry(),
             )
             mock_orch_cls.assert_called_once()
@@ -504,7 +510,10 @@ class TestModeDispatch:
 
             await run_pipeline(
                 _make_task(),
-                PipelineConfig(pipeline_mode="debate", arbiter_mode="off"),
+                PipelineConfig(
+                    pipeline_mode="debate", arbiter_mode="off",
+                    persist_sessions=False,
+                ),
                 _make_three_model_registry(),
             )
             mock_orch_cls.assert_called_once()

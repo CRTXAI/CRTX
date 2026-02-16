@@ -48,6 +48,12 @@ from triad.schemas.routing import (
     RoutingDecision,
     RoutingStrategy,
 )
+from triad.schemas.session import (
+    SessionQuery,
+    SessionRecord,
+    SessionSummary,
+    StageRecord,
+)
 
 __all__ = [
     "AgentMessage",
@@ -74,8 +80,12 @@ __all__ = [
     "RoleFitness",
     "RoutingDecision",
     "RoutingStrategy",
+    "SessionQuery",
+    "SessionRecord",
+    "SessionSummary",
     "Severity",
     "StageConfig",
+    "StageRecord",
     "Suggestion",
     "SuggestionDecision",
     "SuggestionVerdict",

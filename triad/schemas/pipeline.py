@@ -163,6 +163,14 @@ class PipelineConfig(BaseModel):
         default=0.70, ge=0.0, le=1.0,
         description="Minimum fitness threshold for cost-optimized routing",
     )
+    persist_sessions: bool = Field(
+        default=True,
+        description="Whether to persist pipeline sessions to SQLite",
+    )
+    session_db_path: str = Field(
+        default="~/.triad/sessions.db",
+        description="Path to the session database file",
+    )
 
 
 class PipelineResult(BaseModel):
@@ -172,6 +180,9 @@ class PipelineResult(BaseModel):
     and timing data. Used for output rendering and session logging.
     """
 
+    session_id: str = Field(
+        default="", description="Unique session identifier (UUID), populated at runtime",
+    )
     task: TaskSpec = Field(description="The original task specification")
     config: PipelineConfig = Field(description="Pipeline configuration used for this run")
     stages: dict[PipelineStage, AgentMessage] = Field(
