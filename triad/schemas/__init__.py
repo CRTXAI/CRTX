@@ -45,6 +45,9 @@ from triad.schemas.pipeline import (
     StageConfig,
     TaskSpec,
 )
+from triad.schemas.planner import (
+    PlannerResult,
+)
 from triad.schemas.reconciliation import (
     Deviation,
     ImplementationSummary,
@@ -81,6 +84,7 @@ __all__ = [
     "ModelConfig",
     "Objection",
     "ParallelResult",
+    "PlannerResult",
     "PipelineConfig",
     "PipelineMode",
     "PipelineResult",

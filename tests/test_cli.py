@@ -268,11 +268,10 @@ class TestRun:
 
 
 class TestPlan:
-    def test_plan_shows_stub(self):
-        """triad plan shows the v0.1 stub message."""
+    def test_plan_requires_description(self):
+        """triad plan without args shows usage error."""
         result = runner.invoke(app, ["plan"])
-        assert result.exit_code == 0
-        assert "Coming in v0.1" in result.output
+        assert result.exit_code == 2  # missing required argument
 
 
 # ── triad estimate Tests ──────────────────────────────────────────

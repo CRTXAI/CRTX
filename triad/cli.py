@@ -334,17 +334,241 @@ def _display_result(result) -> None:
 # ── triad plan ───────────────────────────────────────────────────
 
 @app.command()
-def plan() -> None:
+def plan(
+    description: str = typer.Argument(..., help="Rough task description to expand"),
+    interactive: bool = typer.Option(
+        False, "--interactive", "-i",
+        help="Ask clarifying questions before expanding",
+    ),
+    run_immediately: bool = typer.Option(
+        False, "--run",
+        help="Pipe expanded spec directly to pipeline (skip confirmation)",
+    ),
+    save: str = typer.Option(
+        None, "--save", "-s",
+        help="Save expanded spec to file",
+    ),
+    edit: bool = typer.Option(
+        False, "--edit", "-e",
+        help="Open expanded spec in $EDITOR before running",
+    ),
+    model: str = typer.Option(
+        None, "--model",
+        help="Override planner model selection",
+    ),
+    mode: str = typer.Option(
+        "sequential", "--mode", "-m",
+        help="Pipeline mode if --run is used",
+    ),
+    route: str = typer.Option(
+        "hybrid", "--route", "-r",
+        help="Routing strategy if --run is used",
+    ),
+) -> None:
     """Expand a rough idea into a structured task spec."""
-    console.print(
-        Panel(
-            "[yellow]Coming in v0.1 — task planner[/yellow]\n\n"
-            "Will expand a rough idea into a structured task spec\n"
-            "with optional interactive clarifying questions.",
-            title="[bold]triad plan[/bold]",
-            border_style="yellow",
+    from triad.planner import TaskPlanner
+
+    if not description.strip():
+        console.print("[red]Error:[/red] Description cannot be empty.")
+        raise typer.Exit(1) from None
+
+    registry = _load_registry()
+
+    planner = TaskPlanner(registry)
+
+    try:
+        selected_model = planner.select_model(model)
+    except RuntimeError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1) from None
+
+    model_display = registry[selected_model].display_name
+
+    console.print(Panel(
+        f"[bold]Description:[/bold] {description}\n"
+        f"[bold]Model:[/bold] {model_display} ({selected_model})\n"
+        f"[bold]Mode:[/bold] {'interactive' if interactive else 'quick'}",
+        title="[bold blue]Task Planner[/bold blue]",
+        border_style="blue",
+    ))
+
+    user_answers = None
+
+    if interactive:
+        # Phase 1: Ask clarifying questions
+        console.print()
+        with console.status("[bold blue]Generating questions...", spinner="dots"):
+            phase1 = asyncio.run(
+                planner.plan(description, interactive=True, model_override=model)
+            )
+
+        if phase1.clarifying_questions:
+            console.print(Panel(
+                "\n".join(phase1.clarifying_questions),
+                title="[bold yellow]Clarifying Questions[/bold yellow]",
+                border_style="yellow",
+            ))
+            console.print()
+            console.print("[bold]Answer each question below (press Enter to skip):[/bold]")
+
+            answers: list[str] = []
+            for i, question in enumerate(phase1.clarifying_questions, 1):
+                answer = typer.prompt(f"  Q{i}", default="", show_default=False)
+                if answer:
+                    answers.append(f"Q{i}: {question}\nA{i}: {answer}")
+
+            user_answers = "\n\n".join(answers) if answers else "No answers provided."
+
+            console.print(
+                f"\n[dim]Phase 1 cost: ${phase1.cost:.4f} "
+                f"({phase1.token_usage.prompt_tokens}+"
+                f"{phase1.token_usage.completion_tokens} tokens)[/dim]"
+            )
+        else:
+            user_answers = "No specific preferences."
+
+    # Phase 2 (or quick mode): Expand the spec
+    console.print()
+    with console.status("[bold blue]Expanding task specification...", spinner="dots"):
+        result = asyncio.run(
+            planner.plan(
+                description,
+                interactive=interactive,
+                user_answers=user_answers,
+                model_override=model,
+            )
         )
+
+    # Display the expanded spec
+    console.print()
+    _display_plan_result(result)
+
+    # Save to file
+    if save:
+        save_path = Path(save)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        save_path.write_text(result.expanded_spec, encoding="utf-8")
+        console.print(f"\n[green]Spec saved to:[/green] {save}")
+
+    # Edit in $EDITOR
+    if edit:
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", delete=False, encoding="utf-8",
+        ) as tmp:
+            tmp.write(result.expanded_spec)
+            tmp_path = tmp.name
+
+        editor = os.environ.get("EDITOR", os.environ.get("VISUAL", ""))
+        if not editor:
+            console.print(
+                "[yellow]Warning:[/yellow] $EDITOR not set. "
+                "Showing spec as-is."
+            )
+        else:
+            import subprocess
+
+            subprocess.run([editor, tmp_path], check=False)
+            edited = Path(tmp_path).read_text(encoding="utf-8")
+            result.expanded_spec = edited
+            result.task_spec = TaskSpec(task=edited)
+
+    # Run pipeline or prompt
+    if run_immediately:
+        _run_from_plan(result, registry, mode, route)
+    elif not save:
+        console.print()
+        choice = typer.prompt(
+            "[r]un pipeline  [s]ave to file  [q]uit",
+            default="q",
+            show_default=False,
+        )
+        if choice.lower() == "r":
+            _run_from_plan(result, registry, mode, route)
+        elif choice.lower() == "s":
+            out_path = typer.prompt("Save path", default="task-spec.md")
+            Path(out_path).write_text(
+                result.expanded_spec, encoding="utf-8",
+            )
+            console.print(f"[green]Saved to:[/green] {out_path}")
+
+
+def _display_plan_result(result) -> None:
+    """Display the expanded spec with tech stack highlights."""
+    from rich.markdown import Markdown
+
+    console.print(Panel(
+        Markdown(result.expanded_spec),
+        title="[bold green]Generated Task Spec[/bold green]",
+        border_style="green",
+    ))
+
+    if result.tech_stack_inferred:
+        tech_text = "  ".join(
+            f"[bold cyan]{t}[/bold cyan]" for t in result.tech_stack_inferred
+        )
+        console.print(f"\n[bold]Inferred Tech Stack:[/bold]  {tech_text}")
+
+    console.print(
+        f"\n[dim]Cost: ${result.cost:.4f} "
+        f"({result.token_usage.prompt_tokens}+"
+        f"{result.token_usage.completion_tokens} tokens) "
+        f"Model: {result.model_used}[/dim]"
     )
+
+
+def _run_from_plan(result, registry, mode_str: str, route_str: str) -> None:
+    """Execute the pipeline using the planner's expanded spec."""
+    try:
+        pipeline_mode = PipelineMode(mode_str)
+    except ValueError:
+        console.print(f"[red]Invalid mode:[/red] '{mode_str}'")
+        raise typer.Exit(1) from None
+
+    try:
+        routing_strategy = RoutingStrategy(route_str)
+    except ValueError:
+        console.print(f"[red]Invalid routing strategy:[/red] '{route_str}'")
+        raise typer.Exit(1) from None
+
+    base_config = _load_config()
+
+    config = PipelineConfig(
+        pipeline_mode=pipeline_mode,
+        routing_strategy=routing_strategy,
+        arbiter_mode=base_config.arbiter_mode,
+        reconciliation_enabled=base_config.reconciliation_enabled,
+        default_timeout=base_config.default_timeout,
+        max_retries=base_config.max_retries,
+        reconciliation_retries=base_config.reconciliation_retries,
+        stages=base_config.stages,
+        arbiter_model=base_config.arbiter_model,
+        reconcile_model=base_config.reconcile_model,
+        min_fitness=base_config.min_fitness,
+        persist_sessions=base_config.persist_sessions,
+        session_db_path=base_config.session_db_path,
+    )
+
+    task_spec = result.task_spec
+
+    console.print()
+    _display_task_panel(task_spec, config)
+
+    from triad.orchestrator import run_pipeline
+
+    console.print()
+    with console.status("[bold blue]Running pipeline...", spinner="dots"):
+        pipeline_result = asyncio.run(run_pipeline(task_spec, config, registry))
+
+    console.print()
+    _display_result(pipeline_result)
+
+    from triad.output.writer import write_pipeline_output
+
+    output_dir = task_spec.output_dir or "triad-output"
+    write_pipeline_output(pipeline_result, output_dir)
+    console.print(f"\n[dim]Output written to:[/dim] {output_dir}/")
 
 
 # ── triad estimate ───────────────────────────────────────────────
