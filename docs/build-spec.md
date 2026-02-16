@@ -330,6 +330,7 @@ Planned for v0.2.0+ after community feedback:
 
 - **`triad advise`**: Full architectural consultation with adversarial review (see docs/advisor.md)
 - **Collective intelligence mode**: Multi-model reasoning fusion — chain-of-thought fusion, ensemble consensus, iterative refinement, cognitive sub-routing (see docs/collective.md)
+- **Codebase audit**: `triad audit` scans existing code with multiple models independently, cross-validates findings through the Arbiter, produces tiered report (critical/important/suggestion/dismissed), verifies fixes on re-run (see docs/audit.md)
 - **Tournament mode**: Run all registered models on same task, score and rank outputs
 - **Fitness benchmarking system**: Standardized task suites to measure model strengths
 - **Agent memory**: Persistent memory of past decisions across sessions

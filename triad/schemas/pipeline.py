@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from triad.schemas.arbiter import ArbiterReview
 from triad.schemas.consensus import DebateResult, ParallelResult
 from triad.schemas.messages import AgentMessage, PipelineStage, Suggestion
+from triad.schemas.routing import RoutingDecision, RoutingStrategy
 
 
 class PipelineMode(StrEnum):
@@ -154,6 +155,14 @@ class PipelineConfig(BaseModel):
     reconcile_model: str = Field(
         default="", description="Reconciliation Arbiter model override (empty = auto)"
     )
+    routing_strategy: RoutingStrategy = Field(
+        default=RoutingStrategy.HYBRID,
+        description="Model-to-role routing strategy",
+    )
+    min_fitness: float = Field(
+        default=0.70, ge=0.0, le=1.0,
+        description="Minimum fitness threshold for cost-optimized routing",
+    )
 
 
 class PipelineResult(BaseModel):
@@ -195,4 +204,8 @@ class PipelineResult(BaseModel):
     )
     debate_result: DebateResult | None = Field(
         default=None, description="Debate mode result (when mode=debate)"
+    )
+    routing_decisions: list[RoutingDecision] = Field(
+        default_factory=list,
+        description="Routing decisions for each pipeline stage",
     )

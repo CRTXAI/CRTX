@@ -23,7 +23,7 @@ from triad.arbiter.feedback import format_arbiter_feedback
 from triad.arbiter.reconciler import ReconciliationEngine
 from triad.prompts import render_prompt
 from triad.providers.litellm_provider import LiteLLMProvider
-from triad.providers.registry import get_best_model_for_role
+from triad.routing.engine import RoutingEngine
 from triad.schemas.arbiter import ArbiterReview, Verdict
 from triad.schemas.consensus import DebateResult, ParallelResult
 from triad.schemas.messages import (
@@ -40,6 +40,7 @@ from triad.schemas.pipeline import (
     PipelineResult,
     TaskSpec,
 )
+from triad.schemas.routing import RoutingDecision
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +116,8 @@ class PipelineOrchestrator:
         self._session: list[AgentMessage] = []
         self._arbiter = ArbiterEngine(config, registry)
         self._reconciler = ReconciliationEngine(config, registry)
+        self._router = RoutingEngine(config, registry)
+        self._routing_decisions: list[RoutingDecision] = []
 
     @property
     def session(self) -> list[AgentMessage]:
@@ -269,6 +272,7 @@ class PipelineOrchestrator:
             arbiter_reviews=arbiter_reviews,
             halted=halted,
             halt_reason=halt_reason,
+            routing_decisions=self._routing_decisions,
         )
 
     async def _retry_stage(
@@ -349,11 +353,13 @@ class PipelineOrchestrator:
     ) -> AgentMessage:
         """Execute a single pipeline stage.
 
-        Resolves the model, renders the prompt template, calls the provider,
-        and sets routing metadata on the returned AgentMessage.
+        Uses the RoutingEngine to select the model, renders the prompt
+        template, calls the provider, and sets routing metadata on the
+        returned AgentMessage.
         """
-        model_key = self._resolve_model_key(stage)
-        model_config = self._registry[model_key]
+        decision = self._router.select_model(stage)
+        self._routing_decisions.append(decision)
+        model_config = self._registry[decision.model_key]
         provider = LiteLLMProvider(model_config)
 
         # Render the system prompt from the stage's template
@@ -380,30 +386,6 @@ class PipelineOrchestrator:
         msg.confidence = _extract_confidence(msg.content)
 
         return msg
-
-    def _resolve_model_key(self, stage: PipelineStage) -> str:
-        """Determine which model to use for a pipeline stage.
-
-        Checks for a stage-specific override first, then falls back to
-        the best-fit model from the registry.
-
-        Raises:
-            RuntimeError: If the configured model isn't in the registry
-                          or no models are available.
-        """
-        stage_config = self._config.stages.get(stage)
-        if stage_config and stage_config.model:
-            if stage_config.model in self._registry:
-                return stage_config.model
-            raise RuntimeError(
-                f"Stage {stage.value} configured with model '{stage_config.model}' "
-                f"but it is not in the model registry"
-            )
-
-        best = get_best_model_for_role(self._registry, stage)
-        if best is None:
-            raise RuntimeError(f"No models available for stage {stage.value}")
-        return best
 
     def _get_timeout(self, stage: PipelineStage) -> int:
         """Get the timeout in seconds for a pipeline stage."""

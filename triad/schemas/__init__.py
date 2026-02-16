@@ -38,6 +38,11 @@ from triad.schemas.reconciliation import (
     Deviation,
     ImplementationSummary,
 )
+from triad.schemas.routing import (
+    CostEstimate,
+    RoutingDecision,
+    RoutingStrategy,
+)
 
 __all__ = [
     "AgentMessage",
@@ -45,6 +50,7 @@ __all__ = [
     "ArbiterMode",
     "ArbiterReview",
     "CodeBlock",
+    "CostEstimate",
     "DebateResult",
     "Deviation",
     "ImplementationSummary",
@@ -59,6 +65,8 @@ __all__ = [
     "PipelineResult",
     "PipelineStage",
     "RoleFitness",
+    "RoutingDecision",
+    "RoutingStrategy",
     "Severity",
     "StageConfig",
     "Suggestion",
