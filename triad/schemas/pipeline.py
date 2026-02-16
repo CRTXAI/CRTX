@@ -1,7 +1,7 @@
 """Pipeline configuration and task specification schemas.
 
 Defines the configuration models for the pipeline engine, model registry,
-role fitness scoring, and task specifications.
+role fitness scoring, task specifications, and pipeline results.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
-from triad.schemas.messages import PipelineStage
+from triad.schemas.messages import AgentMessage, PipelineStage, Suggestion
 
 
 class ArbiterMode(StrEnum):
@@ -137,3 +137,30 @@ class PipelineConfig(BaseModel):
     reconcile_model: str = Field(
         default="", description="Reconciliation Arbiter model override (empty = auto)"
     )
+
+
+class PipelineResult(BaseModel):
+    """Result of a complete pipeline run.
+
+    Contains all stage outputs, collected suggestions, cost/token totals,
+    and timing data. Used for output rendering and session logging.
+    """
+
+    task: TaskSpec = Field(description="The original task specification")
+    config: PipelineConfig = Field(description="Pipeline configuration used for this run")
+    stages: dict[PipelineStage, AgentMessage] = Field(
+        default_factory=dict, description="AgentMessage output from each pipeline stage"
+    )
+    suggestions: list[Suggestion] = Field(
+        default_factory=list, description="All cross-domain suggestions collected during the run"
+    )
+    total_cost: float = Field(
+        default=0.0, ge=0.0, description="Total USD cost across all model calls"
+    )
+    total_tokens: int = Field(
+        default=0, ge=0, description="Total tokens (prompt + completion) across all calls"
+    )
+    duration_seconds: float = Field(
+        default=0.0, ge=0.0, description="Wall-clock duration of the pipeline run in seconds"
+    )
+    success: bool = Field(default=False, description="Whether the pipeline completed successfully")
