@@ -171,6 +171,22 @@ class PipelineConfig(BaseModel):
         default="~/.triad/sessions.db",
         description="Path to the session database file",
     )
+    context_dir: str | None = Field(
+        default=None,
+        description="Project directory for context injection (None = disabled)",
+    )
+    context_include: list[str] = Field(
+        default_factory=lambda: ["*.py"],
+        description="Glob patterns for files to include in context scanning",
+    )
+    context_exclude: list[str] = Field(
+        default_factory=list,
+        description="Glob patterns for files to exclude from context scanning",
+    )
+    context_token_budget: int = Field(
+        default=8000, gt=0,
+        description="Max tokens to allocate for injected project context",
+    )
 
 
 class PipelineResult(BaseModel):

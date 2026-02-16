@@ -1089,11 +1089,17 @@ async def run_pipeline(
     """Dispatch to the appropriate pipeline mode and return a result.
 
     Routes to PipelineOrchestrator (sequential), ParallelOrchestrator,
-    or DebateOrchestrator based on config.pipeline_mode. When session
-    persistence is enabled, saves the run to SQLite.
+    or DebateOrchestrator based on config.pipeline_mode. When context
+    injection is enabled (context_dir set), scans the project and injects
+    context into the task. When session persistence is enabled, saves the
+    run to SQLite.
     """
     session_id = str(uuid.uuid4())
     started_at = datetime.now(UTC)
+
+    # Context injection
+    if config.context_dir:
+        task = _inject_context(task, config)
 
     if config.pipeline_mode == PipelineMode.PARALLEL:
         result = await ParallelOrchestrator(task, config, registry).run()
@@ -1162,3 +1168,50 @@ async def _save_session(result: PipelineResult, started_at: datetime) -> None:
         logger.info("Session %s persisted", result.session_id)
     except Exception:
         logger.exception("Failed to persist session %s", result.session_id)
+
+
+def _inject_context(task: TaskSpec, config: PipelineConfig) -> TaskSpec:
+    """Scan a project directory and inject context into the task spec.
+
+    Returns a new TaskSpec with the scanned context prepended to
+    the existing context field.
+    """
+    from triad.context.builder import ContextBuilder
+    from triad.context.scanner import CodeScanner
+
+    scanner = CodeScanner(
+        root=config.context_dir,
+        include=config.context_include,
+        exclude=config.context_exclude,
+    )
+    files = scanner.scan()
+
+    if not files:
+        logger.info("Context injection: no files matched in %s", config.context_dir)
+        return task
+
+    builder = ContextBuilder(
+        root_path=config.context_dir,
+        token_budget=config.context_token_budget,
+    )
+    ctx = builder.build(files, task.task)
+
+    logger.info(
+        "Context injection: %d/%d files, ~%d tokens%s",
+        ctx.files_included,
+        ctx.files_scanned,
+        ctx.token_estimate,
+        " (truncated)" if ctx.truncated else "",
+    )
+
+    # Prepend project context to existing context
+    new_context = ctx.context_text
+    if task.context:
+        new_context = f"{new_context}\n\n---\n\n{task.context}"
+
+    return TaskSpec(
+        task=task.task,
+        context=new_context,
+        domain_rules=task.domain_rules,
+        output_dir=task.output_dir,
+    )

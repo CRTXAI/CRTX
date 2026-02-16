@@ -20,6 +20,12 @@ from triad.schemas.consensus import (
     SuggestionVerdict,
     VoteTally,
 )
+from triad.schemas.context import (
+    ContextResult,
+    FunctionSignature,
+    ProjectProfile,
+    ScannedFile,
+)
 from triad.schemas.messages import (
     AgentMessage,
     CodeBlock,
@@ -62,10 +68,12 @@ __all__ = [
     "ArbiterReview",
     "CodeBlock",
     "ConsensusResult",
+    "ContextResult",
     "CostEstimate",
     "DebateResult",
     "Deviation",
     "EscalationResult",
+    "FunctionSignature",
     "ImplementationSummary",
     "Issue",
     "IssueCategory",
@@ -77,9 +85,11 @@ __all__ = [
     "PipelineMode",
     "PipelineResult",
     "PipelineStage",
+    "ProjectProfile",
     "RoleFitness",
     "RoutingDecision",
     "RoutingStrategy",
+    "ScannedFile",
     "SessionQuery",
     "SessionRecord",
     "SessionSummary",

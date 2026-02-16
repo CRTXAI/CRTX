@@ -133,6 +133,22 @@ def run(
         "triad-output", "--output-dir", "-o",
         help="Directory for pipeline output files",
     ),
+    context_dir: str = typer.Option(
+        None, "--context-dir",
+        help="Project directory to scan for context injection",
+    ),
+    include: list[str] = typer.Option(
+        None, "--include",
+        help="Glob patterns for files to include (default: *.py)",
+    ),
+    exclude: list[str] = typer.Option(
+        None, "--exclude",
+        help="Glob patterns for files to exclude",
+    ),
+    context_budget: int = typer.Option(
+        8000, "--context-budget",
+        help="Max tokens for injected project context",
+    ),
 ) -> None:
     """Execute a pipeline run with the specified task and options."""
     # Validate enums
@@ -189,6 +205,10 @@ def run(
         min_fitness=base_config.min_fitness,
         persist_sessions=not no_persist,
         session_db_path=base_config.session_db_path,
+        context_dir=context_dir,
+        context_include=include if include else ["*.py"],
+        context_exclude=exclude if exclude else [],
+        context_token_budget=context_budget,
     )
 
     task_spec = TaskSpec(
