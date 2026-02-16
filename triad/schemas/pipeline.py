@@ -10,6 +10,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+from triad.schemas.arbiter import ArbiterReview
 from triad.schemas.messages import AgentMessage, PipelineStage, Suggestion
 
 
@@ -164,3 +165,12 @@ class PipelineResult(BaseModel):
         default=0.0, ge=0.0, description="Wall-clock duration of the pipeline run in seconds"
     )
     success: bool = Field(default=False, description="Whether the pipeline completed successfully")
+    arbiter_reviews: list[ArbiterReview] = Field(
+        default_factory=list, description="All Arbiter reviews from the pipeline run"
+    )
+    halted: bool = Field(
+        default=False, description="Whether the pipeline was halted by an Arbiter HALT verdict"
+    )
+    halt_reason: str = Field(
+        default="", description="Arbiter reasoning if the pipeline was halted"
+    )

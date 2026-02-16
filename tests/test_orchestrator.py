@@ -10,6 +10,7 @@ from triad.orchestrator import (
     _extract_confidence,
     _format_suggestions,
 )
+from triad.schemas.arbiter import ArbiterReview, Verdict
 from triad.schemas.messages import (
     AgentMessage,
     MessageType,
@@ -28,6 +29,8 @@ from triad.schemas.pipeline import (
 
 # Patch targets
 _PROVIDER = "triad.orchestrator.LiteLLMProvider"
+_ARBITER_REVIEW = "triad.orchestrator.ArbiterEngine.review"
+_RECONCILER_RECONCILE = "triad.orchestrator.ReconciliationEngine.reconcile"
 
 
 # ── Factories ──────────────────────────────────────────────────────
@@ -82,6 +85,21 @@ def _make_agent_message(
         ),
         model="test-model-v1",
     )
+
+
+def _make_approve_review(**overrides) -> ArbiterReview:
+    """Create a canned APPROVE ArbiterReview."""
+    defaults = {
+        "stage_reviewed": PipelineStage.VERIFY,
+        "reviewed_model": "test-model-v1",
+        "arbiter_model": "test-model-v2",
+        "verdict": Verdict.APPROVE,
+        "confidence": 0.95,
+        "reasoning": "All looks good. VERDICT: APPROVE\nCONFIDENCE: 0.95",
+        "token_cost": 0.01,
+    }
+    defaults.update(overrides)
+    return ArbiterReview(**defaults)
 
 
 def _mock_provider_factory(responses: list[AgentMessage]):
@@ -195,7 +213,7 @@ class TestPipelineResult:
     def test_defaults(self):
         result = PipelineResult(
             task=_make_task(),
-            config=PipelineConfig(),
+            config=PipelineConfig(arbiter_mode="off"),
         )
         assert result.stages == {}
         assert result.suggestions == []
@@ -208,7 +226,7 @@ class TestPipelineResult:
         msg = _make_agent_message()
         result = PipelineResult(
             task=_make_task(),
-            config=PipelineConfig(),
+            config=PipelineConfig(arbiter_mode="off"),
             stages={PipelineStage.ARCHITECT: msg},
             suggestions=[
                 Suggestion(
@@ -230,14 +248,14 @@ class TestPipelineResult:
         with pytest.raises(ValidationError):
             PipelineResult(
                 task=_make_task(),
-                config=PipelineConfig(),
+                config=PipelineConfig(arbiter_mode="off"),
                 total_cost=-1.0,
             )
 
     def test_serialization_roundtrip(self):
         result = PipelineResult(
             task=_make_task(),
-            config=PipelineConfig(),
+            config=PipelineConfig(arbiter_mode="off"),
             total_cost=0.5,
             total_tokens=1000,
             duration_seconds=10.0,
@@ -255,7 +273,7 @@ class TestPipelineOrchestratorInit:
     def test_session_starts_empty(self):
         orch = PipelineOrchestrator(
             task=_make_task(),
-            config=PipelineConfig(),
+            config=PipelineConfig(arbiter_mode="off"),
             registry=_make_registry(),
         )
         assert orch.session == []
@@ -280,7 +298,7 @@ class TestPipelineExecution:
         with patch(_PROVIDER, mock_cls):
             orch = PipelineOrchestrator(
                 task=_make_task(),
-                config=PipelineConfig(),
+                config=PipelineConfig(arbiter_mode="off"),
                 registry=_make_registry(),
             )
             result = await orch.run()
@@ -298,7 +316,7 @@ class TestPipelineExecution:
         with patch(_PROVIDER, mock_cls):
             orch = PipelineOrchestrator(
                 task=_make_task(),
-                config=PipelineConfig(),
+                config=PipelineConfig(arbiter_mode="off"),
                 registry=_make_registry(),
             )
             await orch.run()
@@ -311,7 +329,7 @@ class TestPipelineExecution:
         with patch(_PROVIDER, mock_cls):
             orch = PipelineOrchestrator(
                 task=_make_task(),
-                config=PipelineConfig(),
+                config=PipelineConfig(arbiter_mode="off"),
                 registry=_make_registry(),
             )
             result = await orch.run()
@@ -336,7 +354,7 @@ class TestPipelineExecution:
         with patch(_PROVIDER, mock_cls):
             orch = PipelineOrchestrator(
                 task=_make_task(),
-                config=PipelineConfig(),
+                config=PipelineConfig(arbiter_mode="off"),
                 registry=_make_registry(),
             )
             result = await orch.run()
@@ -350,7 +368,7 @@ class TestPipelineExecution:
         with patch(_PROVIDER, mock_cls):
             orch = PipelineOrchestrator(
                 task=_make_task(),
-                config=PipelineConfig(),
+                config=PipelineConfig(arbiter_mode="off"),
                 registry=_make_registry(),
             )
             await orch.run()
@@ -375,7 +393,7 @@ class TestOutputPassing:
         with patch(_PROVIDER, mock_cls):
             orch = PipelineOrchestrator(
                 task=_make_task(),
-                config=PipelineConfig(),
+                config=PipelineConfig(arbiter_mode="off"),
                 registry=_make_registry(),
             )
             await orch.run()
@@ -395,7 +413,7 @@ class TestOutputPassing:
         with patch(_PROVIDER, mock_cls):
             orch = PipelineOrchestrator(
                 task=_make_task(),
-                config=PipelineConfig(),
+                config=PipelineConfig(arbiter_mode="off"),
                 registry=_make_registry(),
             )
             await orch.run()
@@ -415,7 +433,7 @@ class TestOutputPassing:
         with patch(_PROVIDER, mock_cls):
             orch = PipelineOrchestrator(
                 task=_make_task(),
-                config=PipelineConfig(),
+                config=PipelineConfig(arbiter_mode="off"),
                 registry=_make_registry(),
             )
             await orch.run()
@@ -439,7 +457,7 @@ class TestOutputPassing:
         with patch(_PROVIDER, mock_cls):
             orch = PipelineOrchestrator(
                 task=_make_task(task="Build a CLI tool with arg parsing"),
-                config=PipelineConfig(),
+                config=PipelineConfig(arbiter_mode="off"),
                 registry=_make_registry(),
             )
             await orch.run()
@@ -460,7 +478,7 @@ class TestOutputPassing:
         with patch(_PROVIDER, mock_cls):
             orch = PipelineOrchestrator(
                 task=_make_task(domain_rules="Always use snake_case"),
-                config=PipelineConfig(),
+                config=PipelineConfig(arbiter_mode="off"),
                 registry=_make_registry(),
             )
             await orch.run()
@@ -494,7 +512,7 @@ class TestSuggestions:
         with patch(_PROVIDER, mock_cls):
             orch = PipelineOrchestrator(
                 task=_make_task(),
-                config=PipelineConfig(),
+                config=PipelineConfig(arbiter_mode="off"),
                 registry=_make_registry(),
             )
             result = await orch.run()
@@ -522,7 +540,7 @@ class TestSuggestions:
         with patch(_PROVIDER, mock_cls):
             orch = PipelineOrchestrator(
                 task=_make_task(),
-                config=PipelineConfig(),
+                config=PipelineConfig(arbiter_mode="off"),
                 registry=_make_registry(),
             )
             await orch.run()
@@ -543,7 +561,7 @@ class TestTimeoutConfig:
             _make_agent_message("out", 0.92),
         ]
         mock_cls, mock_inst = _mock_provider_factory(responses)
-        config = PipelineConfig(default_timeout=90)
+        config = PipelineConfig(default_timeout=90, arbiter_mode="off")
 
         with patch(_PROVIDER, mock_cls):
             orch = PipelineOrchestrator(
@@ -567,6 +585,7 @@ class TestTimeoutConfig:
         mock_cls, mock_inst = _mock_provider_factory(responses)
         config = PipelineConfig(
             default_timeout=120,
+            arbiter_mode="off",
             stages={
                 PipelineStage.ARCHITECT: StageConfig(timeout=60),
                 PipelineStage.IMPLEMENT: StageConfig(timeout=180),
@@ -603,7 +622,7 @@ class TestPipelineResultAggregation:
         with patch(_PROVIDER, mock_cls):
             orch = PipelineOrchestrator(
                 task=_make_task(),
-                config=PipelineConfig(),
+                config=PipelineConfig(arbiter_mode="off"),
                 registry=_make_registry(),
             )
             result = await orch.run()
@@ -622,7 +641,7 @@ class TestPipelineResultAggregation:
         with patch(_PROVIDER, mock_cls):
             orch = PipelineOrchestrator(
                 task=_make_task(),
-                config=PipelineConfig(),
+                config=PipelineConfig(arbiter_mode="off"),
                 registry=_make_registry(),
             )
             result = await orch.run()
@@ -642,7 +661,7 @@ class TestPipelineResultAggregation:
         with patch(_PROVIDER, mock_cls):
             orch = PipelineOrchestrator(
                 task=_make_task(),
-                config=PipelineConfig(),
+                config=PipelineConfig(arbiter_mode="off"),
                 registry=_make_registry(),
             )
             result = await orch.run()
@@ -672,6 +691,7 @@ class TestModelSelection:
             "fast-model-v1": fast_model,
         }
         config = PipelineConfig(
+            arbiter_mode="off",
             stages={PipelineStage.ARCHITECT: StageConfig(model="fast-model-v1")},
         )
 
@@ -692,6 +712,7 @@ class TestModelSelection:
         mock_cls, mock_inst = _mock_provider_factory(responses)
 
         config = PipelineConfig(
+            arbiter_mode="off",
             stages={PipelineStage.ARCHITECT: StageConfig(model="nonexistent-model")},
         )
 
@@ -716,7 +737,7 @@ class TestModelSelection:
         ):
             orch = PipelineOrchestrator(
                 task=_make_task(),
-                config=PipelineConfig(),
+                config=PipelineConfig(arbiter_mode="off"),
                 registry={},
             )
             await orch.run()
@@ -737,7 +758,7 @@ class TestReconciliationFlag:
         with patch(_PROVIDER, mock_cls):
             orch = PipelineOrchestrator(
                 task=_make_task(),
-                config=PipelineConfig(),
+                config=PipelineConfig(arbiter_mode="off"),
                 registry=_make_registry(),
             )
             await orch.run()
@@ -755,9 +776,15 @@ class TestReconciliationFlag:
             _make_agent_message("out", 0.92),
         ]
         mock_cls, mock_inst = _mock_provider_factory(responses)
-        config = PipelineConfig(reconciliation_enabled=True)
+        config = PipelineConfig(
+            reconciliation_enabled=True, arbiter_mode="off",
+        )
 
-        with patch(_PROVIDER, mock_cls):
+        with (
+            patch(_PROVIDER, mock_cls),
+            patch(_RECONCILER_RECONCILE, new_callable=AsyncMock) as mock_recon,
+        ):
+            mock_recon.return_value = _make_approve_review()
             orch = PipelineOrchestrator(
                 task=_make_task(),
                 config=config,
