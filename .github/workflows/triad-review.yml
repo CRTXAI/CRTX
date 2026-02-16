@@ -1,0 +1,85 @@
+# Triad Orchestrator — Multi-Model PR Review
+#
+# Runs parallel code review across multiple LLMs with consensus.
+# Copy this workflow into your repo's .github/workflows/ directory.
+#
+# Required secrets:
+#   ANTHROPIC_API_KEY  — For Claude models
+#   OPENAI_API_KEY     — For GPT models
+#   GOOGLE_API_KEY     — For Gemini models
+#   XAI_API_KEY        — For Grok models (optional)
+
+name: Triad Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    name: Multi-Model Code Review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for diff
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Triad
+        run: pip install triad-orchestrator
+
+      - name: Generate diff
+        id: diff
+        run: |
+          git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr-diff.txt
+          echo "lines=$(wc -l < /tmp/pr-diff.txt)" >> $GITHUB_OUTPUT
+
+      - name: Run Triad Review
+        if: steps.diff.outputs.lines > 0
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+        run: |
+          triad review \
+            --diff /tmp/pr-diff.txt \
+            --format json \
+            --fail-on critical \
+            > /tmp/review-result.json
+
+      - name: Post review summary
+        if: always() && steps.diff.outputs.lines > 0
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+        run: |
+          triad review \
+            --diff /tmp/pr-diff.txt \
+            --format summary \
+            > /tmp/review-summary.md
+
+      - name: Comment on PR
+        if: always() && steps.diff.outputs.lines > 0
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('/tmp/review-summary.md', 'utf8');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: summary,
+            });

@@ -1080,6 +1080,169 @@ def sessions_delete(
         raise typer.Exit(1) from None
 
 
+# ── triad review ─────────────────────────────────────────────────
+
+@app.command()
+def review(
+    diff_file: str = typer.Option(
+        None, "--diff", "-d",
+        help="Path to a file containing a unified diff",
+    ),
+    ref: str = typer.Option(
+        None, "--ref",
+        help="Git ref range for diff (e.g. origin/main..HEAD)",
+    ),
+    stdin: bool = typer.Option(
+        False, "--stdin",
+        help="Read diff from stdin",
+    ),
+    focus: str = typer.Option(
+        None, "--focus",
+        help="Comma-separated focus areas (e.g. security,performance)",
+    ),
+    no_arbiter: bool = typer.Option(
+        False, "--no-arbiter",
+        help="Skip cross-validation of findings",
+    ),
+    fmt: str = typer.Option(
+        "summary", "--format", "-f",
+        help="Output format: summary, comments, or json",
+    ),
+    fail_on: str = typer.Option(
+        "critical", "--fail-on",
+        help="Exit with error on: critical, warning, or any",
+    ),
+) -> None:
+    """Run multi-model parallel code review on a diff."""
+    import sys
+
+    from triad.ci.formatter import format_exit_code, format_summary
+    from triad.ci.reviewer import ReviewRunner
+    from triad.schemas.ci import ReviewConfig
+
+    # Get the diff text
+    diff_text = ""
+    if diff_file:
+        diff_path = Path(diff_file)
+        if not diff_path.exists():
+            console.print(f"[red]Diff file not found:[/red] {diff_file}")
+            raise typer.Exit(1) from None
+        diff_text = diff_path.read_text(encoding="utf-8")
+    elif ref:
+        import subprocess
+
+        try:
+            result = subprocess.run(
+                ["git", "diff", ref],
+                capture_output=True, text=True, check=True,
+            )
+            diff_text = result.stdout
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            console.print(f"[red]Failed to generate diff:[/red] {e}")
+            raise typer.Exit(1) from None
+    elif stdin:
+        diff_text = sys.stdin.read()
+    else:
+        console.print(
+            "[red]Error:[/red] Provide one of --diff, --ref, or --stdin"
+        )
+        raise typer.Exit(1) from None
+
+    if not diff_text.strip():
+        console.print("[dim]Empty diff — nothing to review.[/dim]")
+        raise typer.Exit(0) from None
+
+    registry = _load_registry()
+
+    focus_areas = [a.strip() for a in focus.split(",")] if focus else []
+
+    config = ReviewConfig(
+        focus_areas=focus_areas,
+        arbiter_enabled=not no_arbiter,
+    )
+
+    runner = ReviewRunner(registry)
+
+    console.print(Panel(
+        f"[bold]Models:[/bold] {len(registry)}\n"
+        f"[bold]Focus:[/bold] {', '.join(focus_areas) if focus_areas else 'all'}\n"
+        f"[bold]Arbiter:[/bold] {'enabled' if not no_arbiter else 'disabled'}",
+        title="[bold blue]Triad Review[/bold blue]",
+        border_style="blue",
+    ))
+
+    with console.status("[bold blue]Running parallel review...", spinner="dots"):
+        review_result = asyncio.run(runner.review(diff_text, config))
+
+    if fmt == "json":
+        import json
+
+        console.print(json.dumps(review_result.model_dump(), indent=2))
+    elif fmt == "comments":
+        from triad.ci.formatter import format_github_comments
+
+        comments = format_github_comments(review_result)
+        import json
+
+        console.print(json.dumps(comments, indent=2))
+    else:
+        # summary (default)
+        summary = format_summary(review_result)
+        from rich.markdown import Markdown
+
+        console.print(Markdown(summary))
+
+        # Rich table for findings
+        if review_result.findings:
+            console.print()
+            table = Table(title="Findings", show_lines=True)
+            table.add_column("Severity")
+            table.add_column("File", style="cyan")
+            table.add_column("Line", justify="right")
+            table.add_column("Description")
+            table.add_column("Reporters", style="dim")
+
+            severity_style = {
+                "critical": "bold red",
+                "warning": "bold yellow",
+                "suggestion": "dim",
+            }
+
+            for f in review_result.findings:
+                style = severity_style.get(f.severity, "white")
+                confirmed = " ✓" if f.confirmed else ""
+                table.add_row(
+                    Text(f.severity.upper(), style=style),
+                    f.file,
+                    str(f.line) if f.line else "-",
+                    f.description[:80],
+                    ", ".join(f.reported_by) + confirmed,
+                )
+            console.print(table)
+
+        # Summary metrics
+        console.print()
+        metrics = Table.grid(padding=(0, 2))
+        metrics.add_row(
+            "[bold]Consensus:[/bold]",
+            review_result.consensus_recommendation.upper(),
+            "[bold]Cost:[/bold]",
+            f"${review_result.total_cost:.4f}",
+        )
+        metrics.add_row(
+            "[bold]Findings:[/bold]",
+            str(review_result.total_findings),
+            "[bold]Duration:[/bold]",
+            f"{review_result.duration_seconds:.1f}s",
+        )
+        console.print(Panel(metrics, title="[bold]Review Summary[/bold]"))
+
+    # Exit code
+    exit_code = format_exit_code(review_result, fail_on)
+    if exit_code != 0:
+        raise typer.Exit(exit_code) from None
+
+
 # ── Entry point ──────────────────────────────────────────────────
 
 if __name__ == "__main__":

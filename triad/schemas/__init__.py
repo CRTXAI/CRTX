@@ -11,6 +11,12 @@ from triad.schemas.arbiter import (
     Severity,
     Verdict,
 )
+from triad.schemas.ci import (
+    ModelAssessment,
+    ReviewConfig,
+    ReviewFinding,
+    ReviewResult,
+)
 from triad.schemas.consensus import (
     ConsensusResult,
     DebateResult,
@@ -81,11 +87,15 @@ __all__ = [
     "Issue",
     "IssueCategory",
     "MessageType",
+    "ModelAssessment",
     "ModelConfig",
     "Objection",
     "ParallelResult",
     "PlannerResult",
     "PipelineConfig",
+    "ReviewConfig",
+    "ReviewFinding",
+    "ReviewResult",
     "PipelineMode",
     "PipelineResult",
     "PipelineStage",
