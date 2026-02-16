@@ -1,0 +1,22 @@
+﻿# Python
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.venv/
+
+# Environment
+.env
+.env.*
+
+# PRIVATE — domain-specific config NEVER committed
+triad/config/domain/
+config/domain/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
