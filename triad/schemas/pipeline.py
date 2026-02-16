@@ -11,7 +11,20 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 from triad.schemas.arbiter import ArbiterReview
+from triad.schemas.consensus import DebateResult, ParallelResult
 from triad.schemas.messages import AgentMessage, PipelineStage, Suggestion
+
+
+class PipelineMode(StrEnum):
+    """Pipeline execution mode.
+
+    Controls whether the pipeline runs stages sequentially, fans out
+    to all models in parallel, or conducts a structured debate.
+    """
+
+    SEQUENTIAL = "sequential"
+    PARALLEL = "parallel"
+    DEBATE = "debate"
 
 
 class ArbiterMode(StrEnum):
@@ -114,6 +127,9 @@ class PipelineConfig(BaseModel):
     mode, reconciliation, timeouts, and per-stage model assignments.
     """
 
+    pipeline_mode: PipelineMode = Field(
+        default=PipelineMode.SEQUENTIAL, description="Pipeline execution mode"
+    )
     arbiter_mode: ArbiterMode = Field(
         default=ArbiterMode.BOOKEND, description="Arbiter review depth"
     )
@@ -173,4 +189,10 @@ class PipelineResult(BaseModel):
     )
     halt_reason: str = Field(
         default="", description="Arbiter reasoning if the pipeline was halted"
+    )
+    parallel_result: ParallelResult | None = Field(
+        default=None, description="Parallel exploration result (when mode=parallel)"
+    )
+    debate_result: DebateResult | None = Field(
+        default=None, description="Debate mode result (when mode=debate)"
     )

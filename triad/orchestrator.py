@@ -13,6 +13,7 @@ HALT stops the pipeline. Optional ISR reconciliation runs after Verify.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -24,6 +25,7 @@ from triad.prompts import render_prompt
 from triad.providers.litellm_provider import LiteLLMProvider
 from triad.providers.registry import get_best_model_for_role
 from triad.schemas.arbiter import ArbiterReview, Verdict
+from triad.schemas.consensus import DebateResult, ParallelResult
 from triad.schemas.messages import (
     AgentMessage,
     MessageType,
@@ -34,6 +36,7 @@ from triad.schemas.pipeline import (
     ArbiterMode,
     ModelConfig,
     PipelineConfig,
+    PipelineMode,
     PipelineResult,
     TaskSpec,
 )
@@ -509,3 +512,546 @@ def _format_suggestions(
         lines.append(line)
 
     return "\n".join(lines)
+
+
+# ── Score extraction for parallel cross-review ────────────────────
+
+_ARCH_SCORE_RE = re.compile(r"ARCHITECTURE:\s*(\d+)")
+_IMPL_SCORE_RE = re.compile(r"IMPLEMENTATION:\s*(\d+)")
+_QUALITY_SCORE_RE = re.compile(r"QUALITY:\s*(\d+)")
+
+
+def _extract_scores(content: str) -> dict[str, int]:
+    """Extract architecture/implementation/quality scores from review."""
+    scores: dict[str, int] = {}
+    for name, pattern in [
+        ("architecture", _ARCH_SCORE_RE),
+        ("implementation", _IMPL_SCORE_RE),
+        ("quality", _QUALITY_SCORE_RE),
+    ]:
+        match = pattern.search(content)
+        if match:
+            scores[name] = max(1, min(10, int(match.group(1))))
+        else:
+            scores[name] = 5  # neutral default
+    return scores
+
+
+def _get_tiebreaker_key(registry: dict[str, ModelConfig]) -> str:
+    """Select the tiebreaker model — highest-fitness verifier."""
+    return max(registry, key=lambda k: registry[k].fitness.verifier)
+
+
+# ── Parallel Exploration Orchestrator ─────────────────────────────
+
+
+class ParallelOrchestrator:
+    """Parallel exploration pipeline mode.
+
+    All models in the registry produce independent solutions in parallel.
+    Cross-review scoring determines a winner via consensus vote. The
+    winner's approach is enhanced with the best elements from others.
+    """
+
+    def __init__(
+        self,
+        task: TaskSpec,
+        config: PipelineConfig,
+        registry: dict[str, ModelConfig],
+    ) -> None:
+        self._task = task
+        self._config = config
+        self._registry = registry
+        self._arbiter = ArbiterEngine(config, registry)
+
+    async def run(self) -> PipelineResult:
+        """Execute the parallel exploration pipeline."""
+        start = time.monotonic()
+        arbiter_reviews: list[ArbiterReview] = []
+        all_messages: list[AgentMessage] = []
+        timeout = self._config.default_timeout
+
+        # Phase 1: Fan-out — all models produce solutions in parallel
+        logger.info("Parallel fan-out: %d models", len(self._registry))
+        individual_outputs: dict[str, str] = {}
+        fan_out_tasks = {}
+        for key, cfg in self._registry.items():
+            fan_out_tasks[key] = self._call_model(
+                key, cfg, "architect", timeout,
+            )
+
+        results = await asyncio.gather(
+            *fan_out_tasks.values(), return_exceptions=True,
+        )
+        for key, result in zip(fan_out_tasks, results, strict=True):
+            if isinstance(result, Exception):
+                logger.error("Model %s failed in fan-out: %s", key, result)
+                continue
+            individual_outputs[key] = result.content
+            all_messages.append(result)
+
+        if len(individual_outputs) < 2:
+            raise RuntimeError(
+                f"Parallel mode requires at least 2 successful outputs, "
+                f"got {len(individual_outputs)}"
+            )
+
+        # Phase 2: Cross-review — each model scores the others
+        logger.info("Parallel cross-review")
+        scores: dict[str, dict[str, dict[str, int]]] = {}
+        review_tasks = []
+        review_keys: list[tuple[str, str]] = []
+
+        for reviewer_key in self._registry:
+            if reviewer_key not in individual_outputs:
+                continue
+            reviewer_cfg = self._registry[reviewer_key]
+            for reviewed_key, output in individual_outputs.items():
+                if reviewed_key == reviewer_key:
+                    continue
+                review_tasks.append(
+                    self._call_model(
+                        reviewer_key,
+                        reviewer_cfg,
+                        "parallel_review",
+                        timeout,
+                        reviewed_model=reviewed_key,
+                        solution=output,
+                    )
+                )
+                review_keys.append((reviewer_key, reviewed_key))
+
+        review_results = await asyncio.gather(
+            *review_tasks, return_exceptions=True,
+        )
+        for (reviewer, reviewed), result in zip(
+            review_keys, review_results, strict=True,
+        ):
+            if isinstance(result, Exception):
+                logger.error(
+                    "Review %s->%s failed: %s", reviewer, reviewed, result,
+                )
+                continue
+            all_messages.append(result)
+            if reviewer not in scores:
+                scores[reviewer] = {}
+            scores[reviewer][reviewed] = _extract_scores(result.content)
+
+        # Phase 3: Vote — derive votes from scores
+        votes: dict[str, str] = {}
+        for voter, voter_scores in scores.items():
+            if not voter_scores:
+                continue
+            # Vote for the model with highest total score
+            votes[voter] = max(
+                voter_scores,
+                key=lambda k: sum(voter_scores[k].values()),
+            )
+
+        # Phase 4: Tally votes and determine winner
+        winner = self._tally_votes(votes, individual_outputs)
+        logger.info("Parallel winner: %s", winner)
+
+        # Phase 5: Synthesis — winner enhances with best of others
+        logger.info("Parallel synthesis by %s", winner)
+        winner_cfg = self._registry[winner]
+        other_outputs = {
+            k: v for k, v in individual_outputs.items() if k != winner
+        }
+        synth_msg = await self._call_model(
+            winner,
+            winner_cfg,
+            "parallel_synthesize",
+            timeout,
+            winner_model=winner,
+            winning_output=individual_outputs[winner],
+            other_outputs=other_outputs,
+        )
+        all_messages.append(synth_msg)
+        synthesized_output = synth_msg.content
+
+        # Phase 6: Arbiter review of synthesized output
+        if self._config.arbiter_mode != ArbiterMode.OFF:
+            review = await self._arbiter.review(
+                stage=PipelineStage.VERIFY,
+                stage_model=winner_cfg.model,
+                stage_output=synthesized_output,
+                task=self._task,
+            )
+            arbiter_reviews.append(review)
+
+        # Build result
+        duration = time.monotonic() - start
+        total_cost = sum(
+            m.token_usage.cost for m in all_messages if m.token_usage
+        ) + sum(r.token_cost for r in arbiter_reviews)
+        total_tokens = sum(
+            (m.token_usage.prompt_tokens + m.token_usage.completion_tokens)
+            for m in all_messages
+            if m.token_usage
+        )
+
+        halted = any(r.verdict == Verdict.HALT for r in arbiter_reviews)
+
+        return PipelineResult(
+            task=self._task,
+            config=self._config,
+            total_cost=total_cost,
+            total_tokens=total_tokens,
+            duration_seconds=duration,
+            success=not halted,
+            arbiter_reviews=arbiter_reviews,
+            halted=halted,
+            halt_reason=(
+                arbiter_reviews[-1].reasoning
+                if halted and arbiter_reviews
+                else ""
+            ),
+            parallel_result=ParallelResult(
+                individual_outputs=individual_outputs,
+                scores=scores,
+                votes=votes,
+                winner=winner,
+                synthesized_output=synthesized_output,
+            ),
+        )
+
+    def _tally_votes(
+        self,
+        votes: dict[str, str],
+        candidates: dict[str, str],
+    ) -> str:
+        """Tally votes and return winner. Tie -> tiebreaker model."""
+        if not votes:
+            return _get_tiebreaker_key(self._registry)
+
+        counts: dict[str, int] = {}
+        for voted_for in votes.values():
+            counts[voted_for] = counts.get(voted_for, 0) + 1
+
+        max_count = max(counts.values())
+        leaders = [k for k, c in counts.items() if c == max_count]
+
+        if len(leaders) == 1:
+            return leaders[0]
+
+        # Tie -> highest-fitness verifier among tied models
+        tiebreaker = max(
+            leaders,
+            key=lambda k: self._registry[k].fitness.verifier,
+        )
+        logger.info(
+            "Vote tie between %s, tiebreaker: %s", leaders, tiebreaker,
+        )
+        return tiebreaker
+
+    async def _call_model(
+        self,
+        model_key: str,
+        model_config: ModelConfig,
+        template_name: str,
+        timeout: int,
+        **template_vars: object,
+    ) -> AgentMessage:
+        """Call a model with a rendered prompt template."""
+        tpl_vars: dict = {
+            "task": self._task.task,
+            "context": self._task.context,
+            "domain_context": self._task.domain_rules,
+            **template_vars,
+        }
+        system = render_prompt(template_name, **tpl_vars)
+        provider = LiteLLMProvider(model_config)
+
+        msg = await provider.complete(
+            messages=[{
+                "role": "user",
+                "content": (
+                    "Execute the task as described "
+                    "in your system instructions."
+                ),
+            }],
+            system=system,
+            timeout=timeout,
+        )
+        msg.from_agent = PipelineStage.ARCHITECT
+        msg.to_agent = PipelineStage.ARCHITECT
+        msg.msg_type = MessageType.PROPOSAL
+        msg.confidence = _extract_confidence(msg.content)
+        return msg
+
+
+# ── Debate Orchestrator ───────────────────────────────────────────
+
+
+class DebateOrchestrator:
+    """Structured debate pipeline mode.
+
+    Each model proposes an approach, writes rebuttals of other proposals,
+    presents final arguments, and a judge model renders a decision.
+    """
+
+    def __init__(
+        self,
+        task: TaskSpec,
+        config: PipelineConfig,
+        registry: dict[str, ModelConfig],
+    ) -> None:
+        self._task = task
+        self._config = config
+        self._registry = registry
+        self._arbiter = ArbiterEngine(config, registry)
+
+    async def run(self) -> PipelineResult:
+        """Execute the debate pipeline."""
+        start = time.monotonic()
+        arbiter_reviews: list[ArbiterReview] = []
+        all_messages: list[AgentMessage] = []
+        timeout = self._config.default_timeout
+
+        # Phase 1: Position papers
+        logger.info(
+            "Debate: position papers from %d models",
+            len(self._registry),
+        )
+        proposals: dict[str, str] = {}
+        prop_tasks = {}
+        for key, cfg in self._registry.items():
+            prop_tasks[key] = self._call_model(
+                key, cfg, "debate_propose", timeout,
+            )
+
+        prop_results = await asyncio.gather(
+            *prop_tasks.values(), return_exceptions=True,
+        )
+        for key, result in zip(prop_tasks, prop_results, strict=True):
+            if isinstance(result, Exception):
+                logger.error(
+                    "Model %s failed in proposal: %s", key, result,
+                )
+                continue
+            proposals[key] = result.content
+            all_messages.append(result)
+
+        if len(proposals) < 2:
+            raise RuntimeError(
+                f"Debate mode requires at least 2 proposals, "
+                f"got {len(proposals)}"
+            )
+
+        # Phase 2: Rebuttals
+        logger.info("Debate: rebuttals")
+        rebuttals: dict[str, dict[str, str]] = {}
+        rebuttal_tasks = {}
+        for key, cfg in self._registry.items():
+            if key not in proposals:
+                continue
+            other_proposals = {
+                k: v for k, v in proposals.items() if k != key
+            }
+            rebuttal_tasks[key] = self._call_model(
+                key,
+                cfg,
+                "debate_rebuttal",
+                timeout,
+                own_proposal=proposals[key],
+                other_proposals=other_proposals,
+            )
+
+        reb_results = await asyncio.gather(
+            *rebuttal_tasks.values(), return_exceptions=True,
+        )
+        for key, result in zip(rebuttal_tasks, reb_results, strict=True):
+            if isinstance(result, Exception):
+                logger.error(
+                    "Model %s failed in rebuttal: %s", key, result,
+                )
+                continue
+            all_messages.append(result)
+            other_keys = [k for k in proposals if k != key]
+            rebuttals[key] = self._parse_rebuttals(
+                result.content, other_keys,
+            )
+
+        # Phase 3: Final arguments
+        logger.info("Debate: final arguments")
+        final_arguments: dict[str, str] = {}
+        final_tasks = {}
+        for key, cfg in self._registry.items():
+            if key not in proposals:
+                continue
+            rebuttals_received = {}
+            for rebutter, targets in rebuttals.items():
+                if key in targets:
+                    rebuttals_received[rebutter] = targets[key]
+
+            final_tasks[key] = self._call_model(
+                key,
+                cfg,
+                "debate_final",
+                timeout,
+                own_proposal=proposals[key],
+                rebuttals_received=rebuttals_received,
+            )
+
+        final_results = await asyncio.gather(
+            *final_tasks.values(), return_exceptions=True,
+        )
+        for key, result in zip(final_tasks, final_results, strict=True):
+            if isinstance(result, Exception):
+                logger.error(
+                    "Model %s failed in final argument: %s", key, result,
+                )
+                continue
+            final_arguments[key] = result.content
+            all_messages.append(result)
+
+        # Phase 4: Judgment
+        judge_key = _get_tiebreaker_key(self._registry)
+        judge_cfg = self._registry[judge_key]
+        logger.info("Debate: judgment by %s", judge_key)
+
+        judge_msg = await self._call_model(
+            judge_key,
+            judge_cfg,
+            "debate_judge",
+            timeout,
+            proposals=proposals,
+            all_rebuttals=rebuttals,
+            final_arguments=final_arguments,
+        )
+        all_messages.append(judge_msg)
+        judgment = judge_msg.content
+
+        # Phase 5: Arbiter review of judgment
+        if self._config.arbiter_mode != ArbiterMode.OFF:
+            review = await self._arbiter.review(
+                stage=PipelineStage.VERIFY,
+                stage_model=judge_cfg.model,
+                stage_output=judgment,
+                task=self._task,
+            )
+            arbiter_reviews.append(review)
+
+        # Build result
+        duration = time.monotonic() - start
+        total_cost = sum(
+            m.token_usage.cost for m in all_messages if m.token_usage
+        ) + sum(r.token_cost for r in arbiter_reviews)
+        total_tokens = sum(
+            (m.token_usage.prompt_tokens + m.token_usage.completion_tokens)
+            for m in all_messages
+            if m.token_usage
+        )
+
+        halted = any(r.verdict == Verdict.HALT for r in arbiter_reviews)
+
+        return PipelineResult(
+            task=self._task,
+            config=self._config,
+            total_cost=total_cost,
+            total_tokens=total_tokens,
+            duration_seconds=duration,
+            success=not halted,
+            arbiter_reviews=arbiter_reviews,
+            halted=halted,
+            halt_reason=(
+                arbiter_reviews[-1].reasoning
+                if halted and arbiter_reviews
+                else ""
+            ),
+            debate_result=DebateResult(
+                proposals=proposals,
+                rebuttals=rebuttals,
+                final_arguments=final_arguments,
+                judgment=judgment,
+                judge_model=judge_key,
+            ),
+        )
+
+    def _parse_rebuttals(
+        self,
+        content: str,
+        target_keys: list[str],
+    ) -> dict[str, str]:
+        """Parse a combined rebuttal output into per-target rebuttals.
+
+        Looks for '## Rebuttal: <model_key>' headers. Falls back to
+        assigning the entire content to all targets if parsing fails.
+        """
+        parsed: dict[str, str] = {}
+        for key in target_keys:
+            pattern = rf"##\s*Rebuttal:\s*{re.escape(key)}"
+            match = re.search(pattern, content, re.IGNORECASE)
+            if match:
+                start_pos = match.end()
+                next_match = re.search(
+                    r"##\s*Rebuttal:",
+                    content[start_pos:],
+                    re.IGNORECASE,
+                )
+                end = (
+                    start_pos + next_match.start()
+                    if next_match
+                    else len(content)
+                )
+                parsed[key] = content[start_pos:end].strip()
+            else:
+                parsed[key] = content
+
+        return parsed
+
+    async def _call_model(
+        self,
+        model_key: str,
+        model_config: ModelConfig,
+        template_name: str,
+        timeout: int,
+        **template_vars: object,
+    ) -> AgentMessage:
+        """Call a model with a rendered prompt template."""
+        tpl_vars: dict = {
+            "task": self._task.task,
+            "context": self._task.context,
+            "domain_context": self._task.domain_rules,
+            **template_vars,
+        }
+        system = render_prompt(template_name, **tpl_vars)
+        provider = LiteLLMProvider(model_config)
+
+        msg = await provider.complete(
+            messages=[{
+                "role": "user",
+                "content": (
+                    "Execute the task as described "
+                    "in your system instructions."
+                ),
+            }],
+            system=system,
+            timeout=timeout,
+        )
+        msg.from_agent = PipelineStage.ARCHITECT
+        msg.to_agent = PipelineStage.ARCHITECT
+        msg.msg_type = MessageType.PROPOSAL
+        msg.confidence = _extract_confidence(msg.content)
+        return msg
+
+
+# ── Pipeline Dispatcher ──────────────────────────────────────────
+
+
+async def run_pipeline(
+    task: TaskSpec,
+    config: PipelineConfig,
+    registry: dict[str, ModelConfig],
+) -> PipelineResult:
+    """Dispatch to the appropriate pipeline mode and return a result.
+
+    Routes to PipelineOrchestrator (sequential), ParallelOrchestrator,
+    or DebateOrchestrator based on config.pipeline_mode.
+    """
+    if config.pipeline_mode == PipelineMode.PARALLEL:
+        return await ParallelOrchestrator(task, config, registry).run()
+    if config.pipeline_mode == PipelineMode.DEBATE:
+        return await DebateOrchestrator(task, config, registry).run()
+    return await PipelineOrchestrator(task, config, registry).run()

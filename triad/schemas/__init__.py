@@ -11,6 +11,10 @@ from triad.schemas.arbiter import (
     Severity,
     Verdict,
 )
+from triad.schemas.consensus import (
+    DebateResult,
+    ParallelResult,
+)
 from triad.schemas.messages import (
     AgentMessage,
     CodeBlock,
@@ -24,6 +28,7 @@ from triad.schemas.pipeline import (
     ArbiterMode,
     ModelConfig,
     PipelineConfig,
+    PipelineMode,
     PipelineResult,
     RoleFitness,
     StageConfig,
@@ -40,6 +45,7 @@ __all__ = [
     "ArbiterMode",
     "ArbiterReview",
     "CodeBlock",
+    "DebateResult",
     "Deviation",
     "ImplementationSummary",
     "Issue",
@@ -47,7 +53,9 @@ __all__ = [
     "MessageType",
     "ModelConfig",
     "Objection",
+    "ParallelResult",
     "PipelineConfig",
+    "PipelineMode",
     "PipelineResult",
     "PipelineStage",
     "RoleFitness",
