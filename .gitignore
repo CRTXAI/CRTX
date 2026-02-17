@@ -20,3 +20,5 @@ config/domain/
 
 # OS
 .DS_Store
+debug-dump/
+debug-bundle.txt
