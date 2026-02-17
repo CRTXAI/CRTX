@@ -26,7 +26,7 @@ class TestLoadModels:
         expected_keys = [
             "claude-opus",
             "claude-sonnet",
-            # "claude-haiku",  # disabled until model ID confirmed
+            "claude-haiku",
             "gpt-4o",
             "o3-mini",
             "gemini-pro",

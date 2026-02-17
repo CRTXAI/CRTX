@@ -49,7 +49,7 @@ PROVIDERS = [
 
 # Map env var to a lightweight LiteLLM model ID for validation
 _VALIDATION_MODELS: dict[str, str] = {
-    "ANTHROPIC_API_KEY": "anthropic/claude-sonnet-4-5-20250514",
+    "ANTHROPIC_API_KEY": "anthropic/claude-sonnet-4-5-20250929",
     "OPENAI_API_KEY": "gpt-4o-mini",
     "GEMINI_API_KEY": "gemini/gemini-2.5-flash",
     "XAI_API_KEY": "xai/grok-3",

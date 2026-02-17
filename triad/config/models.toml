@@ -25,7 +25,7 @@ verifier = 0.90
 
 [models.claude-sonnet]
 provider = "anthropic"
-model = "anthropic/claude-sonnet-4-5-20250514"
+model = "anthropic/claude-sonnet-4-5-20250929"
 display_name = "Claude Sonnet 4.5"
 api_key_env = "ANTHROPIC_API_KEY"
 context_window = 200000
@@ -42,25 +42,24 @@ implementer = 0.85
 refactorer = 0.90
 verifier = 0.85
 
-# [models.claude-haiku]
-# Disabled until correct model ID confirmed — "claude-haiku-4-5-20250901" returns errors.
-# provider = "anthropic"
-# model = "anthropic/claude-haiku-4-5-20250901"
-# display_name = "Claude Haiku 4.5"
-# api_key_env = "ANTHROPIC_API_KEY"
-# context_window = 200000
-# supports_tools = true
-# supports_structured = true
-# supports_vision = true
-# supports_thinking = false
-# cost_input = 0.80
-# cost_output = 4.00
-#
-# [models.claude-haiku.fitness]
-# architect = 0.65
-# implementer = 0.70
-# refactorer = 0.75
-# verifier = 0.70
+[models.claude-haiku]
+provider = "anthropic"
+model = "anthropic/claude-haiku-4-5-20251001"
+display_name = "Claude Haiku 4.5"
+api_key_env = "ANTHROPIC_API_KEY"
+context_window = 200000
+supports_tools = true
+supports_structured = true
+supports_vision = true
+supports_thinking = false
+cost_input = 0.80
+cost_output = 4.00
+
+[models.claude-haiku.fitness]
+architect = 0.65
+implementer = 0.70
+refactorer = 0.75
+verifier = 0.70
 
 # ─── OpenAI ──────────────────────────────────────────────────
 
