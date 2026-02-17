@@ -137,6 +137,127 @@ class TestExtractCodeBlocks:
         assert "    if True:" in blocks[0].content
         assert "        return 42" in blocks[0].content
 
+    def test_filepath_hint_inside_code_block(self):
+        """Filepath hint on the first line inside the code block."""
+        content = (
+            "Here is the code:\n\n"
+            "```python\n"
+            "# file: email_validator.py\n"
+            "def validate(email):\n"
+            "    return '@' in email\n"
+            "```\n"
+        )
+        blocks = extract_code_blocks(content)
+        assert len(blocks) == 1
+        assert blocks[0].filepath == "email_validator.py"
+        assert "def validate(email):" in blocks[0].content
+        # The filepath hint line should be stripped from content
+        assert "# file: email_validator.py" not in blocks[0].content
+
+    def test_standalone_filepath_block_merged(self):
+        """A standalone block with only a filepath hint merges with next block."""
+        content = (
+            "```text\n"
+            "# file: utils.py\n"
+            "```\n\n"
+            "```python\n"
+            "def helper():\n"
+            "    pass\n"
+            "```\n"
+        )
+        blocks = extract_code_blocks(content)
+        assert len(blocks) == 1
+        assert blocks[0].filepath == "utils.py"
+        assert blocks[0].language == "python"
+        assert "def helper():" in blocks[0].content
+
+    def test_mixed_filepath_patterns(self):
+        """Mix of preceding hint, inside hint, and standalone merge."""
+        content = (
+            "# file: first.py\n"
+            "```python\n"
+            "x = 1\n"
+            "```\n\n"
+            "```python\n"
+            "# file: second.py\n"
+            "y = 2\n"
+            "```\n\n"
+            "```text\n"
+            "# file: third.py\n"
+            "```\n\n"
+            "```python\n"
+            "z = 3\n"
+            "```\n"
+        )
+        blocks = extract_code_blocks(content)
+        assert len(blocks) == 3
+        assert blocks[0].filepath == "first.py"
+        assert blocks[1].filepath == "second.py"
+        assert blocks[2].filepath == "third.py"
+        assert "x = 1" in blocks[0].content
+        assert "y = 2" in blocks[1].content
+        assert "z = 3" in blocks[2].content
+
+    def test_inside_hint_with_slash_comment(self):
+        """Filepath hint inside block using // filepath: syntax."""
+        content = (
+            "```typescript\n"
+            "// filepath: src/index.ts\n"
+            "const app = express();\n"
+            "```\n"
+        )
+        blocks = extract_code_blocks(content)
+        assert len(blocks) == 1
+        assert blocks[0].filepath == "src/index.ts"
+        assert "const app = express();" in blocks[0].content
+        assert "// filepath:" not in blocks[0].content
+
+
+class TestUntitledFiltering:
+    """Tests for filtering out untitled fragment blocks."""
+
+    def test_filepath_only_comment_discarded(self):
+        """A code block containing only a filepath comment is discarded."""
+        content = (
+            "```python\n"
+            "# file: src/email_validator.py\n"
+            "```\n"
+        )
+        blocks = extract_code_blocks(content)
+        # The filepath hint is extracted, leaving empty content → discarded
+        assert len(blocks) == 0
+
+    def test_untitled_with_real_code_kept(self):
+        """Untitled blocks with actual code are preserved."""
+        content = (
+            "```python\n"
+            "def hello():\n"
+            '    print("world")\n'
+            "```\n"
+        )
+        blocks = extract_code_blocks(content)
+        assert len(blocks) == 1
+        assert blocks[0].filepath == "untitled.py"
+        assert "def hello():" in blocks[0].content
+
+    def test_empty_untitled_block_discarded(self):
+        """An untitled block with no content is discarded."""
+        content = "```python\n\n```\n"
+        blocks = extract_code_blocks(content)
+        assert len(blocks) == 0
+
+    def test_named_blocks_always_kept(self):
+        """Blocks with explicit filepath hints are never filtered."""
+        content = (
+            "# file: utils.py\n"
+            "```python\n"
+            "x = 1\n"
+            "```\n"
+        )
+        blocks = extract_code_blocks(content)
+        assert len(blocks) == 1
+        assert blocks[0].filepath == "utils.py"
+
 
 class TestLanguageExtension:
     def test_known_languages(self):

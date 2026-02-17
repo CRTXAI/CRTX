@@ -294,8 +294,8 @@ class TriadREPL:
             from triad.output.writer import write_pipeline_output
 
             output_dir = "triad-output"
-            write_pipeline_output(pipeline_result, output_dir)
-            console.print(f"\n[dim]Output written to:[/dim] {output_dir}/")
+            actual_path = write_pipeline_output(pipeline_result, output_dir)
+            console.print(f"\n[dim]Output written to:[/dim] {actual_path}/")
 
         except Exception as e:
             console.print(f"  [{BRAND['red']}]Error:[/{BRAND['red']}] {e}")

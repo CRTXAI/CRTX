@@ -315,6 +315,86 @@ class TestArbiterEngine:
         assert review is not None
         assert review.arbiter_model == "model-b-v1"
 
+    async def test_low_confidence_approve_downgraded_to_flag(self):
+        """APPROVE with confidence below 0.50 is downgraded to FLAG."""
+        mock_cls, _ = _mock_arbiter_provider(
+            "Looks ok.\nVERDICT: APPROVE\nCONFIDENCE: 0.44"
+        )
+        registry = _make_two_model_registry()
+        config = PipelineConfig()
+        engine = ArbiterEngine(config, registry)
+
+        with patch(_ARBITER_PROVIDER, mock_cls):
+            review = await engine.review(
+                stage=PipelineStage.ARCHITECT,
+                stage_model="model-a-v1",
+                stage_output="Scaffold output",
+                task=_make_task(),
+            )
+
+        assert review.verdict == Verdict.FLAG
+        assert review.confidence == 0.44
+
+    async def test_approve_at_threshold_not_downgraded(self):
+        """APPROVE with confidence exactly at 0.50 stays APPROVE."""
+        mock_cls, _ = _mock_arbiter_provider(
+            "Looks good.\nVERDICT: APPROVE\nCONFIDENCE: 0.50"
+        )
+        registry = _make_two_model_registry()
+        config = PipelineConfig()
+        engine = ArbiterEngine(config, registry)
+
+        with patch(_ARBITER_PROVIDER, mock_cls):
+            review = await engine.review(
+                stage=PipelineStage.ARCHITECT,
+                stage_model="model-a-v1",
+                stage_output="Scaffold output",
+                task=_make_task(),
+            )
+
+        assert review.verdict == Verdict.APPROVE
+        assert review.confidence == 0.50
+
+    async def test_high_confidence_approve_not_downgraded(self):
+        """APPROVE with high confidence stays APPROVE."""
+        mock_cls, _ = _mock_arbiter_provider(
+            "Excellent.\nVERDICT: APPROVE\nCONFIDENCE: 0.92"
+        )
+        registry = _make_two_model_registry()
+        config = PipelineConfig()
+        engine = ArbiterEngine(config, registry)
+
+        with patch(_ARBITER_PROVIDER, mock_cls):
+            review = await engine.review(
+                stage=PipelineStage.ARCHITECT,
+                stage_model="model-a-v1",
+                stage_output="Scaffold output",
+                task=_make_task(),
+            )
+
+        assert review.verdict == Verdict.APPROVE
+        assert review.confidence == 0.92
+
+    async def test_low_confidence_reject_not_affected(self):
+        """REJECT with low confidence is NOT changed — floor only applies to APPROVE."""
+        mock_cls, _ = _mock_arbiter_provider(
+            "Bad output.\nVERDICT: REJECT\nCONFIDENCE: 0.30"
+        )
+        registry = _make_two_model_registry()
+        config = PipelineConfig()
+        engine = ArbiterEngine(config, registry)
+
+        with patch(_ARBITER_PROVIDER, mock_cls):
+            review = await engine.review(
+                stage=PipelineStage.ARCHITECT,
+                stage_model="model-a-v1",
+                stage_output="Scaffold output",
+                task=_make_task(),
+            )
+
+        assert review.verdict == Verdict.REJECT
+        assert review.confidence == 0.30
+
     async def test_selects_highest_fitness_candidate(self):
         """When auto-selecting, picks the model with highest avg fitness."""
         mock_cls, _ = _mock_arbiter_provider(

@@ -346,7 +346,7 @@ class TestRoutingEngine:
         }
 
     def test_hybrid_mixed_selection(self):
-        """Hybrid should pick best model for all stages above threshold."""
+        """Hybrid picks premium for architect/implement, diversity reassigns refactor/verify."""
         registry = _make_diverse_registry()
         config = PipelineConfig(
             arbiter_mode="off",
@@ -357,11 +357,12 @@ class TestRoutingEngine:
         decisions = engine.select_pipeline_models()
 
         decision_map = {d.role: d for d in decisions}
-        # All stages: best model (premium has highest fitness everywhere)
+        # Architect/implement keep premium
         assert decision_map[PipelineStage.ARCHITECT].model_key == "premium"
         assert decision_map[PipelineStage.IMPLEMENT].model_key == "premium"
-        assert decision_map[PipelineStage.REFACTOR].model_key == "premium"
-        assert decision_map[PipelineStage.VERIFY].model_key == "premium"
+        # Refactor/verify reassigned by diversity enforcement
+        assert decision_map[PipelineStage.REFACTOR].model_key == "mid-tier"
+        assert decision_map[PipelineStage.VERIFY].model_key == "mid-tier"
 
     def test_min_fitness_from_config(self):
         """Engine should use min_fitness from PipelineConfig."""
@@ -515,9 +516,14 @@ class TestOrchestratorRouting:
             result = await orch.run()
 
         assert len(result.routing_decisions) == 4
+        decision_map = {d.role: d for d in result.routing_decisions}
         for decision in result.routing_decisions:
             assert isinstance(decision, RoutingDecision)
-            assert decision.model_key == "premium"
+        # Architect/implement keep premium, refactor/verify diversified
+        assert decision_map[PipelineStage.ARCHITECT].model_key == "premium"
+        assert decision_map[PipelineStage.IMPLEMENT].model_key == "premium"
+        assert decision_map[PipelineStage.REFACTOR].model_key == "mid-tier"
+        assert decision_map[PipelineStage.VERIFY].model_key == "mid-tier"
 
     async def test_hybrid_uses_best_models(self):
         """Hybrid routing should use best model above threshold for all stages."""
@@ -548,8 +554,9 @@ class TestOrchestratorRouting:
         decision_map = {d.role: d for d in result.routing_decisions}
         assert decision_map[PipelineStage.ARCHITECT].model_key == "premium"
         assert decision_map[PipelineStage.IMPLEMENT].model_key == "premium"
-        assert decision_map[PipelineStage.REFACTOR].model_key == "premium"
-        assert decision_map[PipelineStage.VERIFY].model_key == "premium"
+        # Diversity enforcement reassigns refactor/verify
+        assert decision_map[PipelineStage.REFACTOR].model_key == "mid-tier"
+        assert decision_map[PipelineStage.VERIFY].model_key == "mid-tier"
 
     async def test_stage_override_takes_precedence(self):
         """Per-stage model override should override routing strategy."""
@@ -608,9 +615,101 @@ class TestOrchestratorRouting:
             result = await orch.run()
 
         decision_map = {d.role: d for d in result.routing_decisions}
-        # budget qualifies for architect (0.70), implement (0.72), verify (0.70)
+        # budget qualifies for architect (0.70) and implement (0.72)
         assert decision_map[PipelineStage.ARCHITECT].model_key == "budget"
         assert decision_map[PipelineStage.IMPLEMENT].model_key == "budget"
-        assert decision_map[PipelineStage.VERIFY].model_key == "budget"
-        # budget refactorer=0.68 < 0.70 threshold, so mid-tier (0.80, cheapest eligible)
+        # budget refactorer=0.68 < 0.70 threshold, so mid-tier
         assert decision_map[PipelineStage.REFACTOR].model_key == "mid-tier"
+        # verify: budget initially selected but diversity enforcement
+        # reassigns it (budget already has architect+implement = 2 stages).
+        # Fallback picks highest-fitness remaining: premium (0.92) > mid-tier (0.80)
+        assert decision_map[PipelineStage.VERIFY].model_key == "premium"
+
+
+# ── Diversity Enforcement ────────────────────────────────────────
+
+
+class TestDiversityEnforcement:
+    def test_diversity_reassigns_overused_model(self):
+        """When one model is assigned to all 4 stages, refactor/verify get reassigned."""
+        registry = _make_diverse_registry()
+        config = PipelineConfig(
+            arbiter_mode="off",
+            routing_strategy=RoutingStrategy.QUALITY_FIRST,
+        )
+        engine = RoutingEngine(config, registry)
+        decisions = engine.select_pipeline_models()
+
+        decision_map = {d.role: d for d in decisions}
+        # Premium would win all 4 stages, but diversity caps at 2
+        assert decision_map[PipelineStage.ARCHITECT].model_key == "premium"
+        assert decision_map[PipelineStage.IMPLEMENT].model_key == "premium"
+        assert decision_map[PipelineStage.REFACTOR].model_key != "premium"
+        assert decision_map[PipelineStage.VERIFY].model_key != "premium"
+
+    def test_diversity_max_two_stages_per_model(self):
+        """No model should be assigned to more than 2 stages."""
+        registry = _make_diverse_registry()
+        config = PipelineConfig(
+            arbiter_mode="off",
+            routing_strategy=RoutingStrategy.QUALITY_FIRST,
+        )
+        engine = RoutingEngine(config, registry)
+        decisions = engine.select_pipeline_models()
+
+        from collections import Counter
+        counts = Counter(d.model_key for d in decisions)
+        for model, count in counts.items():
+            assert count <= 2, f"{model} assigned to {count} stages"
+
+    def test_diversity_skipped_for_single_model_registry(self):
+        """Diversity enforcement is skipped when registry has only 1 model."""
+        registry = {
+            "only": _make_model_config(
+                model="only-v1",
+                fitness=RoleFitness(
+                    architect=0.9, implementer=0.9,
+                    refactorer=0.9, verifier=0.9,
+                ),
+            ),
+        }
+        config = PipelineConfig(
+            arbiter_mode="off",
+            routing_strategy=RoutingStrategy.QUALITY_FIRST,
+        )
+        engine = RoutingEngine(config, registry)
+        decisions = engine.select_pipeline_models()
+
+        # All 4 stages should use the only model — no diversity possible
+        assert all(d.model_key == "only" for d in decisions)
+
+    def test_diversity_rationale_updated(self):
+        """Reassigned stages have updated rationale mentioning diversity."""
+        registry = _make_diverse_registry()
+        config = PipelineConfig(
+            arbiter_mode="off",
+            routing_strategy=RoutingStrategy.QUALITY_FIRST,
+        )
+        engine = RoutingEngine(config, registry)
+        decisions = engine.select_pipeline_models()
+
+        decision_map = {d.role: d for d in decisions}
+        assert "Diversity enforcement" in decision_map[PipelineStage.REFACTOR].rationale
+        assert "Diversity enforcement" in decision_map[PipelineStage.VERIFY].rationale
+
+    def test_speed_first_diversity(self):
+        """speed_first should still get diversity — not all stages on same model."""
+        registry = _make_diverse_registry()
+        config = PipelineConfig(
+            arbiter_mode="off",
+            routing_strategy=RoutingStrategy.SPEED_FIRST,
+        )
+        engine = RoutingEngine(config, registry)
+        decisions = engine.select_pipeline_models()
+
+        decision_map = {d.role: d for d in decisions}
+        # mid-tier wins speed_first (smallest context), but only gets 2 stages
+        assert decision_map[PipelineStage.ARCHITECT].model_key == "mid-tier"
+        assert decision_map[PipelineStage.IMPLEMENT].model_key == "mid-tier"
+        assert decision_map[PipelineStage.REFACTOR].model_key != "mid-tier"
+        assert decision_map[PipelineStage.VERIFY].model_key != "mid-tier"

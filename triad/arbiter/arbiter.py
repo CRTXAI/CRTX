@@ -18,6 +18,10 @@ from triad.schemas.pipeline import ModelConfig, PipelineConfig, TaskSpec
 
 logger = logging.getLogger(__name__)
 
+# Minimum confidence for an APPROVE verdict to be accepted as-is.
+# Below this threshold, APPROVE is downgraded to FLAG.
+_MIN_APPROVE_CONFIDENCE = 0.50
+
 # Regex for extracting VERDICT: <value> from arbiter output
 _VERDICT_RE = re.compile(
     r"\*?\*?VERDICT:\s*(APPROVE|FLAG|REJECT|HALT)\*?\*?",
@@ -130,6 +134,18 @@ class ArbiterEngine:
                     arbiter_config.model,
                     confidence,
                 )
+
+                # Downgrade low-confidence APPROVE to FLAG
+                if (
+                    verdict == Verdict.APPROVE
+                    and confidence < _MIN_APPROVE_CONFIDENCE
+                ):
+                    logger.warning(
+                        "Arbiter approved %s with low confidence (%.2f), "
+                        "treating as FLAG",
+                        stage.value, confidence,
+                    )
+                    verdict = Verdict.FLAG
 
                 return ArbiterReview(
                     stage_reviewed=stage,

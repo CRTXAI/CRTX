@@ -10,7 +10,7 @@ import json
 import re
 from pathlib import Path
 
-from triad.output.renderer import render_summary
+from triad.output.renderer import _display_name_from_litellm_id, render_summary
 from triad.schemas.pipeline import PipelineResult
 
 # Regex to match code blocks with optional file hints
@@ -21,11 +21,11 @@ _CODE_BLOCK_RE = re.compile(
 )
 
 
-def write_pipeline_output(result: PipelineResult, output_dir: str) -> None:
-    """Write pipeline output to a structured directory.
+def write_pipeline_output(result: PipelineResult, output_dir: str) -> str:
+    """Write pipeline output to a session-namespaced directory.
 
     Creates:
-        output_dir/
+        output_dir/{session_id[:8]}/
         ├── code/          # Code files extracted from pipeline output
         ├── tests/         # Test files extracted from pipeline output
         ├── reviews/       # Arbiter review files (one per review)
@@ -34,9 +34,12 @@ def write_pipeline_output(result: PipelineResult, output_dir: str) -> None:
 
     Args:
         result: The completed pipeline result.
-        output_dir: Directory to write output files to.
+        output_dir: Root directory for output.
+
+    Returns:
+        The actual output path (session-namespaced).
     """
-    base = Path(output_dir)
+    base = Path(output_dir) / result.session_id[:8]
     code_dir = base / "code"
     tests_dir = base / "tests"
     reviews_dir = base / "reviews"
@@ -65,6 +68,8 @@ def write_pipeline_output(result: PipelineResult, output_dir: str) -> None:
         encoding="utf-8",
     )
 
+    return str(base)
+
 
 def _extract_code_files(
     result: PipelineResult,
@@ -77,13 +82,32 @@ def _extract_code_files(
     "test" in their name go to tests_dir, others to code_dir.
     Falls back to extracting from AgentMessage.code_blocks if available.
     """
+    # Track written filenames to avoid duplicates between passes
+    written: set[str] = set()
+
+    # Regex for detecting substantive code (function/class definitions)
+    _has_definition = re.compile(
+        r"^\s*(?:def |class |function |const |let |var |pub fn |fn |async def )",
+        re.MULTILINE,
+    )
+
     # First try structured code blocks from messages
     for msg in result.stages.values():
         for block in msg.code_blocks:
+            content = block.content.strip()
+            # Skip untitled fragments: short content with no definitions
+            if (
+                block.filepath.startswith("untitled")
+                and len(content) < 200
+                and not _has_definition.search(content)
+            ):
+                continue
             target = tests_dir if "test" in block.filepath.lower() else code_dir
-            file_path = target / Path(block.filepath).name
+            filename = Path(block.filepath).name
+            file_path = target / filename
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(block.content, encoding="utf-8")
+            written.add(filename)
 
     # Then parse raw content from the last stage (most complete output)
     final_content = ""
@@ -108,6 +132,10 @@ def _extract_code_files(
             file_counter += 1
             ext = _language_extension(language)
             filename = f"output_{file_counter}{ext}"
+
+        # Skip files already written by the first pass (code_blocks)
+        if filename in written:
+            continue
 
         target = tests_dir if "test" in filename.lower() else code_dir
         file_path = target / filename
@@ -151,8 +179,8 @@ def _format_review(review) -> str:
         f"**Verdict:** {review.verdict.value.upper()}"
     )
     lines.append(f"**Confidence:** {review.confidence:.2f}")
-    lines.append(f"**Reviewed Model:** {review.reviewed_model}")
-    lines.append(f"**Arbiter Model:** {review.arbiter_model}")
+    lines.append(f"**Reviewed Model:** {_display_name_from_litellm_id(review.reviewed_model)}")
+    lines.append(f"**Arbiter Model:** {_display_name_from_litellm_id(review.arbiter_model)}")
     lines.append(f"**Cost:** ${review.token_cost:.4f}")
     lines.append("")
 

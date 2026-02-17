@@ -18,7 +18,9 @@ import logging
 import re
 import time
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Any
 
 from triad.arbiter.arbiter import ArbiterEngine
 from triad.arbiter.feedback import format_arbiter_feedback
@@ -26,7 +28,7 @@ from triad.arbiter.reconciler import ReconciliationEngine
 from triad.providers.health import ProviderHealth
 from triad.consensus.protocol import ConsensusEngine
 from triad.prompts import render_prompt
-from triad.providers.litellm_provider import LiteLLMProvider
+from triad.providers.litellm_provider import LiteLLMProvider, _short_error_reason
 from triad.routing.engine import RoutingEngine
 from triad.schemas.arbiter import ArbiterReview, Verdict
 from triad.schemas.consensus import (
@@ -121,11 +123,13 @@ class PipelineOrchestrator:
         config: PipelineConfig,
         registry: dict[str, ModelConfig],
         event_emitter: object | None = None,
+        stream_callback: Callable | None = None,
     ) -> None:
         self._task = task
         self._config = config
         self._registry = registry
         self._emitter = event_emitter
+        self._stream_callback = stream_callback
         self._health = ProviderHealth()
         self._session: list[AgentMessage] = []
         self._arbiter = ArbiterEngine(config, registry, health=self._health)
@@ -136,6 +140,10 @@ class PipelineOrchestrator:
         self._suggestion_decisions: list[SuggestionDecision] = []
         self._stage_models: dict[PipelineStage, str] = {}
         self._model_fallbacks: list[dict] = []
+        # Precomputed primary decisions (with diversity enforcement)
+        self._planned_decisions: dict[PipelineStage, RoutingDecision] = {
+            d.role: d for d in self._router.select_pipeline_models()
+        }
 
     async def _emit(self, event_type: str, **data: object) -> None:
         """Emit a dashboard event if an emitter is attached."""
@@ -177,6 +185,8 @@ class PipelineOrchestrator:
         all_suggestions: list[Suggestion] = []
         arbiter_reviews: list[ArbiterReview] = []
         architect_output = ""
+        implement_output = ""
+        refactor_output = ""
         previous_output = ""
         flagged_issues = ""
         halted = False
@@ -202,6 +212,8 @@ class PipelineOrchestrator:
                 stage=stage,
                 previous_output=previous_output,
                 architect_output=architect_output,
+                implement_output=implement_output,
+                refactor_output=refactor_output,
                 suggestions=all_suggestions,
                 flagged_issues=flagged_issues,
             )
@@ -216,6 +228,10 @@ class PipelineOrchestrator:
             previous_output = msg.content
             if stage == PipelineStage.ARCHITECT:
                 architect_output = msg.content
+            elif stage == PipelineStage.IMPLEMENT:
+                implement_output = msg.content
+            elif stage == PipelineStage.REFACTOR:
+                refactor_output = msg.content
 
             stage_duration = time.monotonic() - stage_start
             stage_cost = msg.token_usage.cost if msg.token_usage else 0.0
@@ -310,6 +326,8 @@ class PipelineOrchestrator:
                         review=review,
                         previous_output=previous_output,
                         architect_output=architect_output,
+                        implement_output=implement_output,
+                        refactor_output=refactor_output,
                         suggestions=all_suggestions,
                         flagged_issues=flagged_issues,
                     )
@@ -327,6 +345,10 @@ class PipelineOrchestrator:
                     previous_output = msg.content
                     if stage == PipelineStage.ARCHITECT:
                         architect_output = msg.content
+                    elif stage == PipelineStage.IMPLEMENT:
+                        implement_output = msg.content
+                    elif stage == PipelineStage.REFACTOR:
+                        refactor_output = msg.content
 
                     # Emit final stage_completed with cumulative totals
                     retry_msg_cost = msg.token_usage.cost if msg.token_usage else 0.0
@@ -414,6 +436,8 @@ class PipelineOrchestrator:
         architect_output: str,
         suggestions: list[Suggestion],
         flagged_issues: str,
+        implement_output: str = "",
+        refactor_output: str = "",
     ) -> tuple[AgentMessage, list[ArbiterReview]]:
         """Retry a stage after REJECT, injecting Arbiter feedback.
 
@@ -436,6 +460,8 @@ class PipelineOrchestrator:
                 stage=stage,
                 previous_output=previous_output,
                 architect_output=architect_output,
+                implement_output=implement_output,
+                refactor_output=refactor_output,
                 suggestions=suggestions,
                 flagged_issues=flagged_issues,
                 arbiter_feedback=feedback,
@@ -539,8 +565,21 @@ class PipelineOrchestrator:
         for attempt in range(self._MAX_FALLBACK_ATTEMPTS):
             # Select model: primary on first attempt, fallback thereafter
             if attempt == 0:
-                decision = self._router.select_model(stage)
+                decision = self._planned_decisions.get(
+                    stage, self._router.select_model(stage),
+                )
                 first_decision = decision
+                # Skip directly to fallback if primary is already unhealthy
+                if not self._health.is_healthy(decision.model_key):
+                    tried_models.append(decision.model_key)
+                    last_error = RuntimeError(
+                        f"{decision.model_key} already marked unhealthy"
+                    )
+                    logger.info(
+                        "Primary model %s unhealthy for %s, skipping to fallback",
+                        decision.model_key, stage.value,
+                    )
+                    continue
             else:
                 decision = self._router.get_fallback(stage, tried_models)
                 if decision is None:
@@ -550,6 +589,7 @@ class PipelineOrchestrator:
                 original_fitness = first_decision.fitness_score
                 fallback_name = self._display_name(decision.model_key)
                 fallback_fitness = decision.fitness_score
+                short_reason = _short_error_reason(last_error)
 
                 self._model_fallbacks.append({
                     "stage": stage.value,
@@ -557,14 +597,14 @@ class PipelineOrchestrator:
                     "original_fitness": original_fitness,
                     "fallback": fallback_name,
                     "fallback_fitness": fallback_fitness,
-                    "reason": str(last_error)[:120],
+                    "reason": short_reason,
                 })
                 await self._emit(
                     "model_fallback",
                     stage=stage.value,
                     original_model=original_name,
                     fallback_model=fallback_name,
-                    reason=str(last_error)[:120],
+                    reason=short_reason,
                 )
 
             self._routing_decisions.append(decision)
@@ -580,17 +620,38 @@ class PipelineOrchestrator:
 
             try:
                 provider = LiteLLMProvider(model_config)
-                msg = await provider.complete(
-                    messages=[{
-                        "role": "user",
-                        "content": (
-                            "Execute the task as described in your "
-                            "system instructions."
-                        ),
-                    }],
-                    system=system,
-                    timeout=timeout,
-                )
+                user_msg = [{
+                    "role": "user",
+                    "content": (
+                        "Execute the task as described in your "
+                        "system instructions."
+                    ),
+                }]
+
+                if self._stream_callback is not None:
+                    # Wrap callback to include stage info and emit events
+                    async def _on_chunk(chunk):
+                        await self._stream_callback(stage, chunk)
+                        await self._emit(
+                            "token_delta",
+                            stage=stage.value,
+                            delta=chunk.delta,
+                            accumulated_length=len(chunk.accumulated),
+                            token_count=chunk.token_count,
+                        )
+
+                    msg = await provider.complete_streaming(
+                        messages=user_msg,
+                        system=system,
+                        timeout=timeout,
+                        on_chunk=_on_chunk,
+                    )
+                else:
+                    msg = await provider.complete(
+                        messages=user_msg,
+                        system=system,
+                        timeout=timeout,
+                    )
 
                 # Set routing metadata
                 msg.from_agent = stage
@@ -602,15 +663,16 @@ class PipelineOrchestrator:
             except (RuntimeError, TimeoutError) as e:
                 last_error = e
                 self._health.mark_unhealthy(decision.model_key)
+                short_reason = _short_error_reason(e)
                 logger.warning(
-                    "%s failed for %s: %s — trying fallback",
-                    model_config.display_name, stage.value, e,
+                    "%s unavailable for %s (%s), falling back",
+                    model_config.display_name, stage.value, short_reason,
                 )
                 await self._emit(
                     "error",
                     error=(
-                        f"{model_config.display_name} unavailable: "
-                        f"{str(e)[:80]}"
+                        f"{model_config.display_name} unavailable "
+                        f"({short_reason})"
                     ),
                 )
 
@@ -634,6 +696,8 @@ class PipelineOrchestrator:
         previous_output: str,
         architect_output: str,
         suggestions: list[Suggestion],
+        implement_output: str = "",
+        refactor_output: str = "",
         flagged_issues: str = "",
         arbiter_feedback: str = "",
         retry_number: int = 0,
@@ -645,12 +709,20 @@ class PipelineOrchestrator:
             "domain_context": self._task.domain_rules,
         }
 
-        if previous_output:
-            tpl_vars["previous_output"] = previous_output
+        # Always set previous_output so templates render it (even if empty)
+        tpl_vars["previous_output"] = previous_output
 
-        # Verifier also receives the architect output for comparison
-        if stage == PipelineStage.VERIFY and architect_output:
-            tpl_vars["architect_output"] = architect_output
+        # Verifier receives the full pipeline context chain
+        if stage == PipelineStage.VERIFY:
+            if architect_output:
+                tpl_vars["architect_output"] = architect_output
+            if implement_output:
+                tpl_vars["implement_output"] = implement_output
+            # Ensure verify always sees the refactor output as previous_output.
+            # If refactor_output is available, prefer it over whatever
+            # previous_output was set to (handles retry edge cases).
+            if refactor_output:
+                tpl_vars["previous_output"] = refactor_output
 
         # Format upstream suggestions targeted at this stage
         upstream = _format_suggestions(suggestions, stage)

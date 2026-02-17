@@ -518,23 +518,33 @@ class TestWriter:
         result = _make_pipeline_result()
         out_dir = str(tmp_path / "output")
 
-        write_pipeline_output(result, out_dir)
+        actual_path = write_pipeline_output(result, out_dir)
 
-        base = Path(out_dir)
+        base = Path(actual_path)
+        assert base.name == "test-ses"  # first 8 chars of session_id
         assert (base / "code").is_dir()
         assert (base / "tests").is_dir()
         assert (base / "reviews").is_dir()
         assert (base / "summary.md").is_file()
         assert (base / "session.json").is_file()
 
+    def test_write_pipeline_output_returns_path(self, tmp_path):
+        """write_pipeline_output returns the session-namespaced path."""
+        result = _make_pipeline_result()
+        out_dir = str(tmp_path / "output")
+
+        actual_path = write_pipeline_output(result, out_dir)
+
+        assert actual_path == str(Path(out_dir) / "test-ses")
+
     def test_write_pipeline_output_summary_content(self, tmp_path):
         """write_pipeline_output creates a valid summary.md."""
         result = _make_pipeline_result()
         out_dir = str(tmp_path / "output")
 
-        write_pipeline_output(result, out_dir)
+        actual_path = write_pipeline_output(result, out_dir)
 
-        summary = (Path(out_dir) / "summary.md").read_text()
+        summary = (Path(actual_path) / "summary.md").read_text()
         assert "Triad Pipeline Summary" in summary
         assert "Build a REST API" in summary
 
@@ -543,10 +553,10 @@ class TestWriter:
         result = _make_pipeline_result()
         out_dir = str(tmp_path / "output")
 
-        write_pipeline_output(result, out_dir)
+        actual_path = write_pipeline_output(result, out_dir)
 
         session_data = json.loads(
-            (Path(out_dir) / "session.json").read_text()
+            (Path(actual_path) / "session.json").read_text()
         )
         assert session_data["session_id"] == "test-session-id"
         assert session_data["success"] is True
@@ -556,9 +566,9 @@ class TestWriter:
         result = _make_pipeline_result()
         out_dir = str(tmp_path / "output")
 
-        write_pipeline_output(result, out_dir)
+        actual_path = write_pipeline_output(result, out_dir)
 
-        reviews = list(Path(out_dir, "reviews").glob("*.md"))
+        reviews = list(Path(actual_path, "reviews").glob("*.md"))
         assert len(reviews) == 1
         content = reviews[0].read_text()
         assert "APPROVE" in content
@@ -586,10 +596,10 @@ class TestWriter:
         )
         out_dir = str(tmp_path / "output")
 
-        write_pipeline_output(result, out_dir)
+        actual_path = write_pipeline_output(result, out_dir)
 
-        code_files = list(Path(out_dir, "code").glob("*"))
-        test_files = list(Path(out_dir, "tests").glob("*"))
+        code_files = list(Path(actual_path, "code").glob("*"))
+        test_files = list(Path(actual_path, "tests").glob("*"))
         assert len(code_files) >= 1
         assert len(test_files) >= 1
 
@@ -603,7 +613,7 @@ class TestWriter:
         )
         out_dir = str(tmp_path / "output")
 
-        write_pipeline_output(result, out_dir)
+        actual_path = write_pipeline_output(result, out_dir)
 
         # Should still create the directory structure
-        assert (Path(out_dir) / "summary.md").is_file()
+        assert (Path(actual_path) / "summary.md").is_file()

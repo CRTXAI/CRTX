@@ -154,16 +154,76 @@ class RoutingEngine:
         )
         return decision
 
+    # Maximum number of stages a single model can be assigned to
+    _MAX_STAGES_PER_MODEL = 2
+
     def select_pipeline_models(
         self,
         strategy: RoutingStrategy | None = None,
     ) -> list[RoutingDecision]:
         """Select models for all 4 pipeline stages.
 
+        Applies diversity enforcement so no single model is assigned
+        to more than ``_MAX_STAGES_PER_MODEL`` stages.
+
         Returns:
             List of RoutingDecisions, one per stage in execution order.
         """
-        return [self.select_model(stage, strategy) for stage in _STAGES]
+        decisions = [self.select_model(stage, strategy) for stage in _STAGES]
+        return self._enforce_diversity(decisions)
+
+    def _enforce_diversity(
+        self,
+        decisions: list[RoutingDecision],
+    ) -> list[RoutingDecision]:
+        """Ensure no single model is used for more than _MAX_STAGES_PER_MODEL stages.
+
+        Keeps the first group of stages (architect, implement) and reassigns
+        the second group (refactor, verify) to the next-best model via
+        ``get_fallback()``. Skips enforcement when the registry has fewer
+        than 2 models.
+        """
+        if len(self._registry) < 2:
+            return decisions
+
+        from collections import Counter
+
+        counts: Counter[str] = Counter(d.model_key for d in decisions)
+        overused = {k for k, c in counts.items() if c > self._MAX_STAGES_PER_MODEL}
+
+        if not overused:
+            return decisions
+
+        # Stages to reassign: prefer later stages (refactor, verify)
+        reassign_stages = {PipelineStage.REFACTOR, PipelineStage.VERIFY}
+        result: list[RoutingDecision] = []
+
+        for decision in decisions:
+            if (
+                decision.model_key in overused
+                and decision.role in reassign_stages
+            ):
+                fallback = self.get_fallback(
+                    decision.role, exclude_models=[decision.model_key],
+                )
+                if fallback is not None:
+                    fallback = RoutingDecision(
+                        model_key=fallback.model_key,
+                        model_id=fallback.model_id,
+                        role=decision.role,
+                        strategy=decision.strategy,
+                        rationale=(
+                            f"Diversity enforcement: reassigned from "
+                            f"{decision.model_key} (>{self._MAX_STAGES_PER_MODEL} stages)"
+                        ),
+                        fitness_score=fallback.fitness_score,
+                        estimated_cost=fallback.estimated_cost,
+                    )
+                    result.append(fallback)
+                    continue
+            result.append(decision)
+
+        return result
 
     def get_fallback(
         self,
