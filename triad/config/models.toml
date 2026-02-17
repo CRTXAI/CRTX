@@ -6,7 +6,7 @@
 
 [models.claude-opus]
 provider = "anthropic"
-model = "claude-opus-4-6"
+model = "anthropic/claude-opus-4-6"
 display_name = "Claude Opus 4.6"
 api_key_env = "ANTHROPIC_API_KEY"
 context_window = 200000
@@ -25,7 +25,7 @@ verifier = 0.90
 
 [models.claude-sonnet]
 provider = "anthropic"
-model = "claude-sonnet-4-5-20250929"
+model = "anthropic/claude-sonnet-4-5-20250514"
 display_name = "Claude Sonnet 4.5"
 api_key_env = "ANTHROPIC_API_KEY"
 context_window = 200000
@@ -44,7 +44,7 @@ verifier = 0.85
 
 [models.claude-haiku]
 provider = "anthropic"
-model = "claude-haiku-4-5-20251001"
+model = "anthropic/claude-haiku-4-5-20250901"
 display_name = "Claude Haiku 4.5"
 api_key_env = "ANTHROPIC_API_KEY"
 context_window = 200000
