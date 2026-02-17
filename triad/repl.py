@@ -437,15 +437,13 @@ class TriadREPL:
             # Try streaming display for sequential mode
             use_streaming = (
                 pipeline_mode == PipelineMode.SEQUENTIAL
-                and console.width >= 80
-                and console.height >= 24
             )
 
             if use_streaming:
                 try:
-                    from triad.cli_streaming_display import StreamingPipelineDisplay
+                    from triad.cli_streaming_display import ScrollingPipelineDisplay
 
-                    streaming_display = StreamingPipelineDisplay(
+                    streaming_display = ScrollingPipelineDisplay(
                         console, self.mode, self.route, self.arbiter,
                     )
                     emitter.add_listener(streaming_display.create_listener())

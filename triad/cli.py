@@ -549,17 +549,15 @@ def run(
         interactive
         and pipeline_mode == PipelineMode.SEQUENTIAL
         and not no_stream
-        and console.width >= 80
-        and console.height >= 24
     )
 
     stream_callback = None
 
     if use_streaming:
         try:
-            from triad.cli_streaming_display import StreamingPipelineDisplay
+            from triad.cli_streaming_display import ScrollingPipelineDisplay
 
-            streaming_display = StreamingPipelineDisplay(console, mode, route, arbiter)
+            streaming_display = ScrollingPipelineDisplay(console, mode, route, arbiter)
             emitter.add_listener(streaming_display.create_listener())
             stream_callback = streaming_display.create_stream_callback()
             with streaming_display:
