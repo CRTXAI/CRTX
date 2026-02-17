@@ -79,16 +79,13 @@ class TestSummaryView:
     def test_show_summary_renders_markdown(self, session_dir, mock_result):
         console = Console(quiet=True)
         viewer = PostRunViewer(console, session_dir, mock_result)
-
-        with patch("builtins.input", return_value=""):
-            viewer._show_summary()
+        # No input needed — _wait_for_back removed
+        viewer._show_summary()
 
     def test_show_summary_missing_file(self, tmp_path, mock_result):
         console = Console(quiet=True)
         viewer = PostRunViewer(console, tmp_path, mock_result)
-
-        with patch("builtins.input", return_value=""):
-            viewer._show_summary()
+        viewer._show_summary()
 
 
 class TestCodeView:
@@ -96,7 +93,7 @@ class TestCodeView:
         console = Console(quiet=True)
         viewer = PostRunViewer(console, session_dir, mock_result)
 
-        # Simulate user pressing 'b' to go back immediately
+        # Code viewer has its own input loop — 'b' to go back
         with patch("builtins.input", return_value="b"):
             viewer._show_code()
 
@@ -104,7 +101,7 @@ class TestCodeView:
         console = Console(quiet=True)
         viewer = PostRunViewer(console, session_dir, mock_result)
 
-        # Simulate: select file 1, then go back
+        # Select file 1, then go back
         with patch("builtins.input", side_effect=["1", "b"]):
             viewer._show_code()
 
@@ -118,21 +115,17 @@ class TestCodeView:
     def test_show_code_empty_dir(self, tmp_path, mock_result):
         console = Console(quiet=True)
         viewer = PostRunViewer(console, tmp_path, mock_result)
-
-        with patch("builtins.input", return_value=""):
-            viewer._show_code()
+        # No input needed — returns immediately when no files
+        viewer._show_code()
 
     def test_show_code_by_index(self, session_dir, mock_result):
         console = Console(quiet=True)
         viewer = PostRunViewer(console, session_dir, mock_result)
-
-        # File #1 exists
         viewer._show_code_by_index(1)
 
     def test_show_code_by_index_out_of_range(self, session_dir, mock_result):
         console = Console(quiet=True)
         viewer = PostRunViewer(console, session_dir, mock_result)
-
         viewer._show_code_by_index(999)
 
     def test_view_file_displays_syntax(self, session_dir, mock_result):
@@ -148,14 +141,11 @@ class TestReviewsView:
         console = Console(quiet=True)
         mock_result.arbiter_reviews = []
         viewer = PostRunViewer(console, session_dir, mock_result)
-
-        with patch("builtins.input", return_value=""):
-            viewer._show_reviews()
+        viewer._show_reviews()
 
     def test_show_reviews_with_data(self, session_dir):
         console = Console(quiet=True)
 
-        # Build a mock review
         review = MagicMock()
         review.verdict = MagicMock(value="flag")
         review.stage_reviewed = MagicMock(value="architect")
@@ -169,9 +159,7 @@ class TestReviewsView:
         result.stages = {}
 
         viewer = PostRunViewer(console, session_dir, result)
-
-        with patch("builtins.input", return_value=""):
-            viewer._show_reviews()
+        viewer._show_reviews()
 
 
 class TestDiffsView:
@@ -179,9 +167,7 @@ class TestDiffsView:
         console = Console(quiet=True)
         mock_result.stages = {}
         viewer = PostRunViewer(console, session_dir, mock_result)
-
-        with patch("builtins.input", return_value=""):
-            viewer._show_diffs()
+        viewer._show_diffs()
 
     def test_show_diffs_with_refactor_output(self, session_dir):
         console = Console(quiet=True)
@@ -198,18 +184,14 @@ class TestDiffsView:
         result.stages = {stage_key: refactor_msg}
 
         viewer = PostRunViewer(console, session_dir, result)
-
-        with patch("builtins.input", return_value=""):
-            viewer._show_diffs()
+        viewer._show_diffs()
 
 
 class TestRunDirect:
     def test_run_direct_summary(self, session_dir, mock_result):
         console = Console(quiet=True)
         viewer = PostRunViewer(console, session_dir, mock_result)
-
-        with patch("builtins.input", return_value=""):
-            viewer.run_direct("summary")
+        viewer.run_direct("summary")
 
     def test_run_direct_code(self, session_dir, mock_result):
         console = Console(quiet=True)
@@ -221,16 +203,12 @@ class TestRunDirect:
     def test_run_direct_reviews(self, session_dir, mock_result):
         console = Console(quiet=True)
         viewer = PostRunViewer(console, session_dir, mock_result)
-
-        with patch("builtins.input", return_value=""):
-            viewer.run_direct("reviews")
+        viewer.run_direct("reviews")
 
     def test_run_direct_diffs(self, session_dir, mock_result):
         console = Console(quiet=True)
         viewer = PostRunViewer(console, session_dir, mock_result)
-
-        with patch("builtins.input", return_value=""):
-            viewer.run_direct("diffs")
+        viewer.run_direct("diffs")
 
 
 class TestRunLoop:
@@ -238,7 +216,7 @@ class TestRunLoop:
         console = Console(quiet=True)
         viewer = PostRunViewer(console, session_dir, mock_result)
 
-        with patch.object(viewer, "_read_key", return_value="enter"):
+        with patch("builtins.input", return_value=""):
             result = viewer.run()
             assert result is None
 
@@ -246,24 +224,34 @@ class TestRunLoop:
         console = Console(quiet=True)
         viewer = PostRunViewer(console, session_dir, mock_result)
 
-        with patch.object(viewer, "_read_key", return_value="q"):
-            result = viewer.run()
-            assert result is None
-
-    def test_run_escape_exits(self, session_dir, mock_result):
-        console = Console(quiet=True)
-        viewer = PostRunViewer(console, session_dir, mock_result)
-
-        with patch.object(viewer, "_read_key", return_value="escape"):
+        with patch("builtins.input", return_value="q"):
             result = viewer.run()
             assert result is None
 
     def test_run_s_then_exit(self, session_dir, mock_result):
+        """Pressing 's' shows summary then menu reappears for next input."""
         console = Console(quiet=True)
         viewer = PostRunViewer(console, session_dir, mock_result)
 
-        keys = iter(["s", "enter"])
-        with patch.object(viewer, "_read_key", side_effect=keys):
-            with patch("builtins.input", return_value=""):
-                result = viewer.run()
-                assert result is None
+        # First input: 's' (view summary), second: '' (exit)
+        with patch("builtins.input", side_effect=["s", ""]):
+            result = viewer.run()
+            assert result is None
+
+    def test_run_multiple_views_then_exit(self, session_dir, mock_result):
+        """User can view multiple subviews before exiting."""
+        console = Console(quiet=True)
+        viewer = PostRunViewer(console, session_dir, mock_result)
+
+        # summary → reviews → diffs → exit
+        with patch("builtins.input", side_effect=["s", "r", "d", ""]):
+            result = viewer.run()
+            assert result is None
+
+    def test_run_eof_exits(self, session_dir, mock_result):
+        console = Console(quiet=True)
+        viewer = PostRunViewer(console, session_dir, mock_result)
+
+        with patch("builtins.input", side_effect=EOFError):
+            result = viewer.run()
+            assert result is None

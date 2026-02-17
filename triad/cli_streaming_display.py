@@ -241,7 +241,11 @@ class ScrollingPipelineDisplay:
         self._in_code_fence: bool = False
         self._file_count: int = 0
 
-        # Rich Live — renders the status bar
+        # Activity line — live preview of streaming content
+        self._last_content_line: str = ""
+        self._tok_samples: list[tuple[float, int]] = []
+
+        # Rich Live — renders the activity line + status bar
         self._live: Live | None = None
 
         # Initialize stage states
@@ -311,6 +315,11 @@ class ScrollingPipelineDisplay:
                 if stage_name in self._stage_models:
                     self._stage_tokens[stage_name] = chunk.token_count
 
+                # Tok/s rolling window
+                self._tok_samples.append(
+                    (time.monotonic(), chunk.token_count)
+                )
+
                 # Line buffer processing — detect file headers
                 self._line_buffer += chunk.delta
                 self._flush_complete_lines()
@@ -345,12 +354,15 @@ class ScrollingPipelineDisplay:
                 filename = match.group(1)
                 self._file_count += 1
                 self._print_markup(f"  [dim]── {filename}[/]")
+                self._last_content_line = ""
                 return
 
         # If inside a code fence, check for close first
         if self._in_code_fence:
             if self._FENCE_CLOSE_RE.match(stripped):
                 self._in_code_fence = False
+            elif stripped and len(stripped) > 5:
+                self._last_content_line = stripped
             return
 
         # Track fence open
@@ -358,13 +370,53 @@ class ScrollingPipelineDisplay:
             self._in_code_fence = True
             return
 
-        # Everything else → swallow (prose, diffs)
+        # Outside code — update preview for prose/planning text
+        if stripped and len(stripped) > 5:
+            self._last_content_line = stripped
 
     # ── Live renderable ────────────────────────────────────────────
 
+    def _calculate_tok_rate(self) -> float:
+        """Calculate tokens per second over a 3-second rolling window."""
+        now = time.monotonic()
+        cutoff = now - 3.0
+        self._tok_samples = [(t, c) for t, c in self._tok_samples if t >= cutoff]
+
+        if len(self._tok_samples) < 2:
+            return 0.0
+
+        oldest_time, oldest_count = self._tok_samples[0]
+        newest_time, newest_count = self._tok_samples[-1]
+        elapsed = newest_time - oldest_time
+        if elapsed <= 0:
+            return 0.0
+
+        return (newest_count - oldest_count) / elapsed
+
     def _build_live_renderable(self) -> Text:
-        """Build the live renderable: the 1-line pinned status bar."""
-        return self._build_status_bar()
+        """Build the live renderable: activity preview + status bar."""
+        lines = Text()
+
+        # Activity preview line (only while actively streaming)
+        if self._current_stage and self._last_content_line:
+            console_width = getattr(self._console, "width", 80) or 80
+            max_width = max(40, console_width - 20)
+            preview = self._last_content_line[:max_width]
+            tok_rate = self._calculate_tok_rate()
+            rate_str = f"{tok_rate:,.0f} tok/s" if tok_rate > 0 else ""
+
+            lines.append("  \u25b8 ", style="dim cyan")
+            lines.append(preview, style="dim")
+            padding = max(1, max_width - len(preview) - len(rate_str))
+            lines.append(" " * padding)
+            if rate_str:
+                lines.append(rate_str, style="dim cyan")
+            lines.append("\n")
+
+        # Status bar (always)
+        lines.append_text(self._build_status_bar())
+
+        return lines
 
     def _build_status_bar(self) -> Text:
         """Build the 1-line pinned status bar.
@@ -406,6 +458,12 @@ class ScrollingPipelineDisplay:
         # Tokens
         bar.append(f"  {_format_tokens(self._total_tokens)} tok", style="dim")
 
+        # Tok/s (only while actively streaming)
+        if self._current_stage:
+            tok_rate = self._calculate_tok_rate()
+            if tok_rate > 0:
+                bar.append(f"  {tok_rate:,.0f} tok/s", style="dim cyan")
+
         return bar
 
     # ── Event handling ─────────────────────────────────────────────
@@ -423,6 +481,8 @@ class ScrollingPipelineDisplay:
             self._stage_models[stage] = model
             self._active_model = model
             self._active_model_stage = stage
+            self._last_content_line = ""
+            self._tok_samples = []
             _, color = _STAGE_SYMBOLS.get(stage, (stage, "white"))
             self._print_markup(
                 f"\n[bold {color}]◉ {stage.title()}[/bold {color}] ({model})"
@@ -440,6 +500,7 @@ class ScrollingPipelineDisplay:
                 self._active_model = None
                 self._active_model_stage = None
             self._current_stage = ""
+            self._last_content_line = ""
             # Flush any remaining partial line
             if self._line_buffer.strip():
                 self._process_line(self._line_buffer)

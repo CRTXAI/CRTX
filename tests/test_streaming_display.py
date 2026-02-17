@@ -391,8 +391,8 @@ class TestFileFiltering:
         ))
         assert display._in_code_fence is False
 
-    def test_live_renderable_is_status_bar_only(self):
-        """Live renderable should be the status bar with no progress hint."""
+    def test_live_renderable_status_bar_when_no_content(self):
+        """Live renderable shows only status bar when no content line."""
         console = Console(quiet=True)
         display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
         display._current_stage = "architect"
@@ -400,9 +400,45 @@ class TestFileFiltering:
 
         renderable = display._build_live_renderable()
         plain = renderable.plain
-        # Should contain stage names (status bar) but no hint text
+        # Should contain stage names (status bar) but no activity line
         assert "Architect" in plain
-        assert "Designing architecture" not in plain
+        assert "\u25b8" not in plain  # No ▸ marker
+
+    def test_live_renderable_shows_activity_line(self):
+        """Live renderable includes activity preview when content available."""
+        console = Console(quiet=True)
+        display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
+        display._current_stage = "architect"
+        display._stage_states["architect"] = StageState.ACTIVE
+        display._last_content_line = "The token bucket strategy maintains a refill rate"
+
+        renderable = display._build_live_renderable()
+        plain = renderable.plain
+        assert "\u25b8" in plain  # ▸ marker present
+        assert "token bucket strategy" in plain
+        # Status bar also present
+        assert "Architect" in plain
+
+    def test_activity_line_clears_on_stage_complete(self):
+        """Activity line disappears after stage completes."""
+        console = Console(quiet=True)
+        display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
+        listener = display.create_listener()
+
+        listener(PipelineEvent(
+            type=EventType.STAGE_STARTED,
+            data={"stage": "architect", "model": "test"},
+        ))
+        display._last_content_line = "some preview text"
+
+        listener(PipelineEvent(
+            type=EventType.STAGE_COMPLETED,
+            data={"stage": "architect", "cost": 0.1, "duration": 5.0},
+        ))
+        assert display._last_content_line == ""
+
+        renderable = display._build_live_renderable()
+        assert "\u25b8" not in renderable.plain
 
 
 class TestInlinePrinting:
@@ -462,3 +498,108 @@ class TestInlinePrinting:
             data={"stage": "verify"},
         ))
         assert display._current_stage == ""
+
+
+class TestTokRate:
+    """Tests for tok/s calculation."""
+
+    def test_no_samples_returns_zero(self):
+        console = Console(quiet=True)
+        display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
+        assert display._calculate_tok_rate() == 0.0
+
+    def test_single_sample_returns_zero(self):
+        console = Console(quiet=True)
+        display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
+        import time
+        display._tok_samples = [(time.monotonic(), 100)]
+        assert display._calculate_tok_rate() == 0.0
+
+    def test_two_samples_calculates_rate(self):
+        console = Console(quiet=True)
+        display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
+        import time
+        now = time.monotonic()
+        display._tok_samples = [
+            (now - 1.0, 100),
+            (now, 200),
+        ]
+        rate = display._calculate_tok_rate()
+        # 100 tokens in ~1 second
+        assert 90 < rate < 110
+
+    def test_old_samples_pruned(self):
+        console = Console(quiet=True)
+        display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
+        import time
+        now = time.monotonic()
+        display._tok_samples = [
+            (now - 10.0, 50),   # older than 3s — should be pruned
+            (now - 1.0, 100),
+            (now, 200),
+        ]
+        rate = display._calculate_tok_rate()
+        assert 90 < rate < 110
+        # Old sample should have been removed
+        assert len(display._tok_samples) == 2
+
+    def test_stage_start_resets_samples(self):
+        console = Console(quiet=True)
+        display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
+        import time
+        display._tok_samples = [(time.monotonic(), 100), (time.monotonic(), 200)]
+        listener = display.create_listener()
+        listener(PipelineEvent(
+            type=EventType.STAGE_STARTED,
+            data={"stage": "implement", "model": "test"},
+        ))
+        assert display._tok_samples == []
+
+
+class TestContentLineUpdate:
+    """Tests for _last_content_line updates from streamed code."""
+
+    def test_code_updates_content_line(self):
+        """Code lines longer than 5 chars update the preview."""
+        console = Console(quiet=True)
+        display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
+        callback = display.create_stream_callback()
+
+        chunk = StreamChunk(
+            delta="```python\ndef calculate_rate(tokens, elapsed):\n```\n",
+            accumulated="```python\ndef calculate_rate(tokens, elapsed):\n```\n",
+            token_count=10,
+        )
+        asyncio.run(callback(PipelineStage.ARCHITECT, chunk))
+        assert "calculate_rate" in display._last_content_line
+
+    def test_short_lines_ignored(self):
+        """Lines 5 chars or shorter should not update preview."""
+        console = Console(quiet=True)
+        display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
+        display._last_content_line = "previous content"
+        callback = display.create_stream_callback()
+
+        chunk = StreamChunk(
+            delta="```python\nx=1\n```\n",
+            accumulated="```python\nx=1\n```\n",
+            token_count=5,
+        )
+        asyncio.run(callback(PipelineStage.ARCHITECT, chunk))
+        # Short line "x=1" should not have overwritten
+        assert display._last_content_line == "previous content"
+
+    def test_file_header_clears_content_line(self):
+        """File header should clear the preview line."""
+        console = Console(quiet=True)
+        display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
+        display._last_content_line = "old preview"
+        callback = display.create_stream_callback()
+
+        chunk = StreamChunk(
+            delta="# file: src/app.py\n",
+            accumulated="# file: src/app.py\n",
+            token_count=5,
+        )
+        asyncio.run(callback(PipelineStage.ARCHITECT, chunk))
+        assert display._last_content_line == ""

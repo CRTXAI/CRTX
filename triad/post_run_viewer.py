@@ -57,12 +57,19 @@ class PostRunViewer:
         self.result = result
 
     def run(self) -> str | None:
-        """Main input loop. Returns 'rerun' or None."""
+        """Main input loop. Returns when user presses Enter/q."""
         while True:
-            key = self._read_key()
-
-            if key in ("", "q", "enter", "escape"):
-                return None
+            self.console.print(
+                "\n[green]\\[s][/] Summary  [green]\\[c][/] Code  "
+                "[green]\\[r][/] Reviews  [green]\\[d][/] Diffs  "
+                "[green]\\[Enter][/] Exit"
+            )
+            try:
+                key = input("> ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                break
+            if key in ("", "q"):
+                break
             elif key == "s":
                 self._show_summary()
             elif key == "c":
@@ -71,6 +78,7 @@ class PostRunViewer:
                 self._show_reviews()
             elif key == "d":
                 self._show_diffs()
+        return None
 
     def run_direct(self, view: str) -> None:
         """Show a specific view without the interactive loop."""
@@ -83,16 +91,6 @@ class PostRunViewer:
         elif view == "diffs":
             self._show_diffs()
 
-    # ── Key input ──────────────────────────────────────────────────
-
-    def _read_key(self) -> str:
-        """Read a single keypress, or 'enter' if non-interactive."""
-        from triad.cli_display import _read_key
-        try:
-            return _read_key()
-        except (KeyboardInterrupt, EOFError):
-            return "q"
-
     # ── Summary view ───────────────────────────────────────────────
 
     def _show_summary(self) -> None:
@@ -100,7 +98,6 @@ class PostRunViewer:
         summary_path = self.session_dir / "summary.md"
         if not summary_path.exists():
             self.console.print("[dim]No summary available.[/dim]")
-            self._wait_for_back()
             return
 
         content = summary_path.read_text(encoding="utf-8")
@@ -111,7 +108,6 @@ class PostRunViewer:
             border_style="dim",
             box=rich.box.ROUNDED,
         ))
-        self._wait_for_back()
 
     # ── Code view ──────────────────────────────────────────────────
 
@@ -128,7 +124,6 @@ class PostRunViewer:
 
         if not files:
             self.console.print("[dim]No code files found.[/dim]")
-            self._wait_for_back()
             return
 
         # Determine base dir for relative paths
@@ -235,7 +230,6 @@ class PostRunViewer:
         reviews = getattr(self.result, "arbiter_reviews", [])
         if not reviews:
             self.console.print("[dim]No arbiter reviews available.[/dim]")
-            self._wait_for_back()
             return
 
         for review in reviews:
@@ -276,8 +270,6 @@ class PostRunViewer:
                 box=rich.box.ROUNDED,
             ))
 
-        self._wait_for_back()
-
     # ── Diffs view ─────────────────────────────────────────────────
 
     def _show_diffs(self) -> None:
@@ -294,7 +286,6 @@ class PostRunViewer:
 
         if not diff_content:
             self.console.print("[dim]No diffs available.[/dim]")
-            self._wait_for_back()
             return
 
         self.console.print()
@@ -322,8 +313,6 @@ class PostRunViewer:
                 box=rich.box.ROUNDED,
             ))
 
-        self._wait_for_back()
-
     def _render_diff(self, content: str) -> None:
         """Render diff content with colors."""
         from rich.text import Text
@@ -348,12 +337,3 @@ class PostRunViewer:
             box=rich.box.ROUNDED,
         ))
 
-    # ── Helpers ────────────────────────────────────────────────────
-
-    def _wait_for_back(self) -> None:
-        """Prompt user to press Enter to return to menu."""
-        self.console.print("\n[dim]Press Enter to return...[/dim]", end="")
-        try:
-            input()
-        except (EOFError, KeyboardInterrupt):
-            pass
