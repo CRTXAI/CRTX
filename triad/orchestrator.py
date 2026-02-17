@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from triad.arbiter.arbiter import ArbiterEngine
 from triad.arbiter.feedback import format_arbiter_feedback
 from triad.arbiter.reconciler import ReconciliationEngine
+from triad.providers.health import ProviderHealth
 from triad.consensus.protocol import ConsensusEngine
 from triad.prompts import render_prompt
 from triad.providers.litellm_provider import LiteLLMProvider
@@ -125,14 +126,16 @@ class PipelineOrchestrator:
         self._config = config
         self._registry = registry
         self._emitter = event_emitter
+        self._health = ProviderHealth()
         self._session: list[AgentMessage] = []
-        self._arbiter = ArbiterEngine(config, registry)
+        self._arbiter = ArbiterEngine(config, registry, health=self._health)
         self._reconciler = ReconciliationEngine(config, registry)
-        self._router = RoutingEngine(config, registry)
+        self._router = RoutingEngine(config, registry, health=self._health)
         self._consensus = ConsensusEngine(config, registry)
         self._routing_decisions: list[RoutingDecision] = []
         self._suggestion_decisions: list[SuggestionDecision] = []
         self._stage_models: dict[PipelineStage, str] = {}
+        self._model_fallbacks: list[dict] = []
 
     async def _emit(self, event_type: str, **data: object) -> None:
         """Emit a dashboard event if an emitter is attached."""
@@ -257,6 +260,15 @@ class PipelineOrchestrator:
                     task=self._task,
                     architect_output=architect_output,
                 )
+                if review is None:
+                    # All arbiter models unavailable — skip review
+                    await self._emit(
+                        "arbiter_skipped",
+                        stage=stage.value,
+                        reason="No arbiter models available",
+                    )
+                    continue
+
                 arbiter_reviews.append(review)
                 await self._emit(
                     "arbiter_verdict",
@@ -391,6 +403,7 @@ class PipelineOrchestrator:
             halted=halted,
             halt_reason=halt_reason,
             routing_decisions=self._routing_decisions,
+            model_fallbacks=self._model_fallbacks,
         )
 
     async def _retry_stage(
@@ -451,6 +464,15 @@ class PipelineOrchestrator:
                     task=self._task,
                     architect_output=architect_output,
                 )
+                if retry_review is None:
+                    # Arbiter unavailable — treat as passed
+                    await self._emit(
+                        "arbiter_skipped",
+                        stage=stage.value,
+                        reason="No arbiter models available for retry review",
+                    )
+                    return msg, retry_reviews
+
                 retry_reviews.append(retry_review)
                 await self._emit(
                     "arbiter_verdict",
@@ -489,54 +511,115 @@ class PipelineOrchestrator:
         )
         return msg, retry_reviews
 
+    _MAX_FALLBACK_ATTEMPTS = 3
+
     async def _run_stage(
         self,
         stage: PipelineStage,
         template_vars: dict,
     ) -> AgentMessage:
-        """Execute a single pipeline stage.
+        """Execute a single pipeline stage with automatic model fallback.
 
-        Uses the RoutingEngine to select the model, renders the prompt
-        template, calls the provider, and sets routing metadata on the
-        returned AgentMessage. Emits stage_started with the selected model.
+        Tries up to 3 different models if the primary selection fails with
+        a transient error (rate limit, timeout, server error). Failed models
+        are marked unhealthy so subsequent stages skip them.
+
+        Raises:
+            RuntimeError: If all models for the stage are exhausted.
         """
-        decision = self._router.select_model(stage)
-        self._routing_decisions.append(decision)
-        self._stage_models[stage] = decision.model_key
-        model_config = self._registry[decision.model_key]
+        tried_models: list[str] = []
+        last_error: Exception | None = None
+        first_decision: RoutingDecision | None = None
 
-        await self._emit(
-            "stage_started",
-            stage=stage.value,
-            model=model_config.display_name,
-        )
-
-        provider = LiteLLMProvider(model_config)
-
-        # Render the system prompt from the stage's template
+        # Render prompt once — it's the same regardless of which model runs
         prompt_name = _STAGE_PROMPT[stage]
         system = render_prompt(prompt_name, **template_vars)
-
         timeout = self._get_timeout(stage)
 
-        msg = await provider.complete(
-            messages=[{
-                "role": "user",
-                "content": "Execute the task as described in your system instructions.",
-            }],
-            system=system,
-            timeout=timeout,
+        for attempt in range(self._MAX_FALLBACK_ATTEMPTS):
+            # Select model: primary on first attempt, fallback thereafter
+            if attempt == 0:
+                decision = self._router.select_model(stage)
+                first_decision = decision
+            else:
+                decision = self._router.get_fallback(stage, tried_models)
+                if decision is None:
+                    break  # no more models available
+
+                original_name = self._display_name(first_decision.model_key)
+                original_fitness = first_decision.fitness_score
+                fallback_name = self._display_name(decision.model_key)
+                fallback_fitness = decision.fitness_score
+
+                self._model_fallbacks.append({
+                    "stage": stage.value,
+                    "original": original_name,
+                    "original_fitness": original_fitness,
+                    "fallback": fallback_name,
+                    "fallback_fitness": fallback_fitness,
+                    "reason": str(last_error)[:120],
+                })
+                await self._emit(
+                    "model_fallback",
+                    stage=stage.value,
+                    original_model=original_name,
+                    fallback_model=fallback_name,
+                    reason=str(last_error)[:120],
+                )
+
+            self._routing_decisions.append(decision)
+            self._stage_models[stage] = decision.model_key
+            model_config = self._registry[decision.model_key]
+            tried_models.append(decision.model_key)
+
+            await self._emit(
+                "stage_started",
+                stage=stage.value,
+                model=model_config.display_name,
+            )
+
+            try:
+                provider = LiteLLMProvider(model_config)
+                msg = await provider.complete(
+                    messages=[{
+                        "role": "user",
+                        "content": (
+                            "Execute the task as described in your "
+                            "system instructions."
+                        ),
+                    }],
+                    system=system,
+                    timeout=timeout,
+                )
+
+                # Set routing metadata
+                msg.from_agent = stage
+                msg.to_agent = _NEXT_STAGE[stage]
+                msg.msg_type = _STAGE_MSG_TYPE[stage]
+                msg.confidence = _extract_confidence(msg.content)
+                return msg
+
+            except (RuntimeError, TimeoutError) as e:
+                last_error = e
+                self._health.mark_unhealthy(decision.model_key)
+                logger.warning(
+                    "%s failed for %s: %s — trying fallback",
+                    model_config.display_name, stage.value, e,
+                )
+                await self._emit(
+                    "error",
+                    error=(
+                        f"{model_config.display_name} unavailable: "
+                        f"{str(e)[:80]}"
+                    ),
+                )
+
+        # All models exhausted
+        raise RuntimeError(
+            f"All models failed for {stage.value} after "
+            f"{len(tried_models)} attempt(s). "
+            f"Tried: {', '.join(tried_models)}. Last error: {last_error}"
         )
-
-        # Set routing metadata
-        msg.from_agent = stage
-        msg.to_agent = _NEXT_STAGE[stage]
-        msg.msg_type = _STAGE_MSG_TYPE[stage]
-
-        # Extract confidence score from the model's output
-        msg.confidence = _extract_confidence(msg.content)
-
-        return msg
 
     def _get_timeout(self, stage: PipelineStage) -> int:
         """Get the timeout in seconds for a pipeline stage."""
@@ -884,7 +967,8 @@ class ParallelOrchestrator:
                 stage_output=synthesized_output,
                 task=self._task,
             )
-            arbiter_reviews.append(review)
+            if review is not None:
+                arbiter_reviews.append(review)
 
         # Build result
         duration = time.monotonic() - start
@@ -1116,7 +1200,8 @@ class DebateOrchestrator:
                 stage_output=judgment,
                 task=self._task,
             )
-            arbiter_reviews.append(review)
+            if review is not None:
+                arbiter_reviews.append(review)
 
         # Build result
         duration = time.monotonic() - start

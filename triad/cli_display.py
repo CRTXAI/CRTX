@@ -510,6 +510,26 @@ class PipelineDisplay:
                     self._pipeline_done = True
                     self._add_log(BRAND["red"], f"✗ HALTED at {stage}: {reason[:60]}")
 
+                elif etype == "model_fallback":
+                    stage = event.data.get("stage", "")
+                    original = event.data.get("original_model", "")
+                    fallback = event.data.get("fallback_model", "")
+                    reason = event.data.get("reason", "")
+                    self._add_log(
+                        BRAND["amber"],
+                        f"⚠ {stage.title()}: {original} unavailable, using {fallback}",
+                    )
+                    if reason:
+                        self._add_log(BRAND["dim"], f"  └ {reason[:80]}")
+
+                elif etype == "arbiter_skipped":
+                    stage = event.data.get("stage", "")
+                    self._arbiter_active = None
+                    self._add_log(
+                        BRAND["dim"],
+                        f"⚖ {stage}: arbiter skipped (no models available)",
+                    )
+
                 elif etype == "error":
                     error = event.data.get("error", "Unknown error")
                     self._add_log(BRAND["red"], f"✗ Error: {str(error)[:80]}")

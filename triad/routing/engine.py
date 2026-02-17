@@ -61,16 +61,19 @@ class RoutingEngine:
 
     Selects models for each pipeline stage using the configured strategy.
     Respects per-stage overrides from PipelineConfig.stages. Records all
-    routing decisions for audit trail.
+    routing decisions for audit trail. Integrates with ProviderHealth to
+    skip models known to be down.
     """
 
     def __init__(
         self,
         config: PipelineConfig,
         registry: dict[str, ModelConfig],
+        health: object | None = None,
     ) -> None:
         self._config = config
         self._registry = registry
+        self._health = health  # ProviderHealth instance (optional)
 
     def select_model(
         self,
@@ -119,10 +122,13 @@ class RoutingEngine:
                 estimated_cost=_estimate_stage_cost(model_cfg, role),
             )
 
+        # Filter to healthy models, fall back to full registry if all unhealthy
+        active = self._healthy_registry()
+
         # Apply strategy
         dispatch = _STRATEGY_FN[effective_strategy]
         model_key, rationale = dispatch(
-            self._registry, role, self._config.min_fitness,
+            active, role, self._config.min_fitness,
         )
 
         model_cfg = self._registry[model_key]
@@ -158,6 +164,63 @@ class RoutingEngine:
             List of RoutingDecisions, one per stage in execution order.
         """
         return [self.select_model(stage, strategy) for stage in _STAGES]
+
+    def get_fallback(
+        self,
+        role: PipelineStage,
+        exclude_models: list[str],
+    ) -> RoutingDecision | None:
+        """Select a fallback model for a role, excluding already-tried models.
+
+        Filters out unhealthy models and ``exclude_models``, then picks
+        the highest-fitness model for the role. Returns ``None`` when no
+        model is available (the stage truly cannot be completed).
+        """
+        candidates = {
+            k: v for k, v in self._registry.items()
+            if k not in exclude_models
+            and (not self._health or self._health.is_healthy(k))
+        }
+        if not candidates:
+            return None
+
+        best_key = max(
+            candidates,
+            key=lambda k: getattr(
+                candidates[k].fitness, _get_fitness_field(role),
+            ),
+        )
+        model_cfg = candidates[best_key]
+        fitness = getattr(model_cfg.fitness, _get_fitness_field(role))
+
+        decision = RoutingDecision(
+            model_key=best_key,
+            model_id=model_cfg.model,
+            role=role,
+            strategy=self._config.routing_strategy,
+            rationale=f"Fallback: best available after excluding {exclude_models}",
+            fitness_score=fitness,
+            estimated_cost=_estimate_stage_cost(model_cfg, role),
+        )
+        logger.info(
+            "Fallback routing %s → %s (fitness=%.2f)",
+            role.value, best_key, fitness,
+        )
+        return decision
+
+    def _healthy_registry(self) -> dict[str, ModelConfig]:
+        """Return the registry filtered to healthy models.
+
+        Falls back to the full registry if all models are unhealthy
+        (better to retry a recovering model than to fail immediately).
+        """
+        if not self._health:
+            return self._registry
+        healthy = {
+            k: v for k, v in self._registry.items()
+            if self._health.is_healthy(k)
+        }
+        return healthy if healthy else self._registry
 
 
 def estimate_cost(

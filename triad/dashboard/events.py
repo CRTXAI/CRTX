@@ -33,6 +33,8 @@ class EventType(StrEnum):
     RETRY_TRIGGERED = "retry_triggered"
     PIPELINE_COMPLETED = "pipeline_completed"
     PIPELINE_HALTED = "pipeline_halted"
+    MODEL_FALLBACK = "model_fallback"
+    ARBITER_SKIPPED = "arbiter_skipped"
     ERROR = "error"
 
 

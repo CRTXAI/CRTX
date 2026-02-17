@@ -265,44 +265,55 @@ class TestArbiterEngine:
 
         assert review.arbiter_model == "model-b-v1"
 
-    async def test_global_override_same_as_stage_raises(self):
+    async def test_global_override_same_as_stage_returns_none(self):
+        """When the override is the same model as the stage, arbiter degrades gracefully."""
         registry = _make_two_model_registry()
         config = PipelineConfig(arbiter_model="model-a")
         engine = ArbiterEngine(config, registry)
 
-        with pytest.raises(RuntimeError, match="same model"):
-            await engine.review(
-                stage=PipelineStage.ARCHITECT,
-                stage_model="model-a-v1",
-                stage_output="output",
-                task=_make_task(),
-            )
+        review = await engine.review(
+            stage=PipelineStage.ARCHITECT,
+            stage_model="model-a-v1",
+            stage_output="output",
+            task=_make_task(),
+        )
+        # Graceful degradation: returns None when no arbiter model available
+        assert review is None
 
-    async def test_single_model_registry_raises(self):
+    async def test_single_model_registry_returns_none(self):
+        """Single-model registry cannot do cross-model review — degrades gracefully."""
         registry = {"only": _make_model_config(model="only-model")}
         config = PipelineConfig()
         engine = ArbiterEngine(config, registry)
 
-        with pytest.raises(RuntimeError, match="No arbiter model"):
-            await engine.review(
-                stage=PipelineStage.ARCHITECT,
-                stage_model="only-model",
-                stage_output="output",
-                task=_make_task(),
-            )
+        review = await engine.review(
+            stage=PipelineStage.ARCHITECT,
+            stage_model="only-model",
+            stage_output="output",
+            task=_make_task(),
+        )
+        assert review is None
 
-    async def test_global_override_not_in_registry_raises(self):
+    async def test_nonexistent_override_falls_back(self):
+        """When arbiter_model override isn't in registry, falls back to best available."""
+        mock_cls, _ = _mock_arbiter_provider(
+            "VERDICT: APPROVE\nCONFIDENCE: 0.9"
+        )
         registry = _make_two_model_registry()
         config = PipelineConfig(arbiter_model="nonexistent")
         engine = ArbiterEngine(config, registry)
 
-        with pytest.raises(RuntimeError, match="not in the model registry"):
-            await engine.review(
+        with patch(_ARBITER_PROVIDER, mock_cls):
+            review = await engine.review(
                 stage=PipelineStage.ARCHITECT,
                 stage_model="model-a-v1",
                 stage_output="output",
                 task=_make_task(),
             )
+
+        # Falls back to model-b (the only cross-model candidate)
+        assert review is not None
+        assert review.arbiter_model == "model-b-v1"
 
     async def test_selects_highest_fitness_candidate(self):
         """When auto-selecting, picks the model with highest avg fitness."""

@@ -601,6 +601,29 @@ def _display_result(result) -> None:
         console.print(table)
         console.print()
 
+    # Model fallbacks
+    if result.model_fallbacks:
+        fb_table = Table(title="Model Fallbacks", show_lines=True)
+        fb_table.add_column("Stage", style="cyan")
+        fb_table.add_column("Original")
+        fb_table.add_column("Fallback")
+        fb_table.add_column("Reason", style="dim")
+
+        for fb in result.model_fallbacks:
+            orig = fb.get("original", "?")
+            orig_fit = fb.get("original_fitness", 0)
+            fallback = fb.get("fallback", "?")
+            fallback_fit = fb.get("fallback_fitness", 0)
+            reason = fb.get("reason", "")
+            fb_table.add_row(
+                fb.get("stage", "?"),
+                f"{orig} (fitness {orig_fit:.2f})",
+                f"{fallback} (fitness {fallback_fit:.2f})",
+                reason[:60],
+            )
+        console.print(fb_table)
+        console.print()
+
     # Routing decisions
     if result.routing_decisions:
         table = Table(title="Routing Decisions")

@@ -236,3 +236,7 @@ class PipelineResult(BaseModel):
         default_factory=list,
         description="Routing decisions for each pipeline stage",
     )
+    model_fallbacks: list[dict] = Field(
+        default_factory=list,
+        description="Model fallback events: [{stage, original, fallback, reason}]",
+    )

@@ -34,16 +34,19 @@ class ArbiterEngine:
     Reviews a pipeline stage's output using a model that is different
     from the one that produced the output (cross-model enforcement).
     Returns a structured ArbiterReview with a verdict that controls
-    pipeline flow.
+    pipeline flow. Supports graceful degradation when arbiter models
+    are unavailable.
     """
 
     def __init__(
         self,
         config: PipelineConfig,
         registry: dict[str, ModelConfig],
+        health: object | None = None,
     ) -> None:
         self._config = config
         self._registry = registry
+        self._health = health  # ProviderHealth instance (optional)
 
     async def review(
         self,
@@ -52,8 +55,12 @@ class ArbiterEngine:
         stage_output: str,
         task: TaskSpec,
         architect_output: str = "",
-    ) -> ArbiterReview:
+    ) -> ArbiterReview | None:
         """Review a stage's output and return a structured verdict.
+
+        Tries multiple arbiter models if the primary is unavailable.
+        Returns ``None`` when no arbiter model is available, signalling
+        the caller to skip arbiter review for this stage.
 
         Args:
             stage: Which pipeline stage produced the output.
@@ -63,92 +70,122 @@ class ArbiterEngine:
             architect_output: The Architect's output for reference.
 
         Returns:
-            ArbiterReview with verdict, issues, alternatives, and reasoning.
+            ArbiterReview, or None if all arbiter models are unavailable.
+        """
+        tried_keys: list[str] = []
+
+        while True:
+            try:
+                arbiter_key = self._resolve_arbiter_model(
+                    stage_model, exclude=tried_keys,
+                )
+            except RuntimeError:
+                # No arbiter model available — degrade gracefully
+                logger.warning(
+                    "No arbiter models available for %s, skipping review",
+                    stage.value,
+                )
+                return None
+
+            arbiter_config = self._registry[arbiter_key]
+            tried_keys.append(arbiter_key)
+
+            try:
+                provider = LiteLLMProvider(arbiter_config)
+
+                system = render_prompt(
+                    "arbiter",
+                    stage_name=stage.value,
+                    stage_model=stage_model,
+                    task=task.task,
+                    context=task.context,
+                    domain_context=task.domain_rules,
+                    stage_output=stage_output,
+                    architect_output=(
+                        architect_output if stage != PipelineStage.ARCHITECT else ""
+                    ),
+                )
+
+                timeout = self._config.default_timeout
+                msg = await provider.complete(
+                    messages=[{
+                        "role": "user",
+                        "content": (
+                            "Review the output as described in your "
+                            "system instructions."
+                        ),
+                    }],
+                    system=system,
+                    timeout=timeout,
+                )
+
+                cost = msg.token_usage.cost if msg.token_usage else 0.0
+                verdict = _extract_verdict(msg.content)
+                confidence = _extract_confidence(msg.content)
+
+                logger.info(
+                    "Arbiter verdict for %s: %s (arbiter=%s, confidence=%.2f)",
+                    stage.value,
+                    verdict.value,
+                    arbiter_config.model,
+                    confidence,
+                )
+
+                return ArbiterReview(
+                    stage_reviewed=stage,
+                    reviewed_model=stage_model,
+                    arbiter_model=arbiter_config.model,
+                    verdict=verdict,
+                    confidence=confidence,
+                    reasoning=msg.content,
+                    token_cost=cost,
+                )
+            except (RuntimeError, TimeoutError) as e:
+                logger.warning(
+                    "Arbiter model %s failed for %s: %s — trying fallback",
+                    arbiter_key, stage.value, e,
+                )
+                if self._health:
+                    self._health.mark_unhealthy(arbiter_key)
+
+    def _resolve_arbiter_model(
+        self,
+        stage_model: str,
+        exclude: list[str] | None = None,
+    ) -> str:
+        """Select an arbiter model different from the stage model.
+
+        Resolution order:
+        1. config.arbiter_model (global override) — unless excluded/unhealthy
+        2. Best available model excluding the stage model and excluded keys
 
         Raises:
             RuntimeError: If no valid arbiter model is available.
         """
-        arbiter_key = self._resolve_arbiter_model(stage_model)
-        arbiter_config = self._registry[arbiter_key]
-        provider = LiteLLMProvider(arbiter_config)
+        exclude = exclude or []
 
-        system = render_prompt(
-            "arbiter",
-            stage_name=stage.value,
-            stage_model=stage_model,
-            task=task.task,
-            context=task.context,
-            domain_context=task.domain_rules,
-            stage_output=stage_output,
-            architect_output=architect_output if stage != PipelineStage.ARCHITECT else "",
-        )
-
-        timeout = self._config.default_timeout
-        msg = await provider.complete(
-            messages=[{
-                "role": "user",
-                "content": "Review the output as described in your system instructions.",
-            }],
-            system=system,
-            timeout=timeout,
-        )
-
-        cost = msg.token_usage.cost if msg.token_usage else 0.0
-        verdict = _extract_verdict(msg.content)
-        confidence = _extract_confidence(msg.content)
-
-        logger.info(
-            "Arbiter verdict for %s: %s (arbiter=%s, confidence=%.2f)",
-            stage.value,
-            verdict.value,
-            arbiter_config.model,
-            confidence,
-        )
-
-        return ArbiterReview(
-            stage_reviewed=stage,
-            reviewed_model=stage_model,
-            arbiter_model=arbiter_config.model,
-            verdict=verdict,
-            confidence=confidence,
-            reasoning=msg.content,
-            token_cost=cost,
-        )
-
-    def _resolve_arbiter_model(self, stage_model: str) -> str:
-        """Select an arbiter model different from the stage model.
-
-        Resolution order:
-        1. config.arbiter_model (global override)
-        2. Best available model excluding the stage model
-
-        Raises:
-            RuntimeError: If no valid arbiter model is available or the
-                          configured model is the same as the stage model.
-        """
-        # 1. Global override
+        # 1. Global override (if not excluded and healthy)
         if self._config.arbiter_model:
             key = self._config.arbiter_model
-            if key not in self._registry:
-                raise RuntimeError(
-                    f"Configured arbiter model '{key}' is not in the model registry"
-                )
-            if self._registry[key].model == stage_model:
-                raise RuntimeError(
-                    f"Configured arbiter model '{key}' is the same model as the "
-                    f"stage generator ({stage_model}). Cross-model enforcement "
-                    f"requires arbiter != generator."
-                )
-            return key
+            if (
+                key in self._registry
+                and key not in exclude
+                and self._registry[key].model != stage_model
+                and (not self._health or self._health.is_healthy(key))
+            ):
+                return key
 
-        # 2. Best available model excluding the stage model
+        # 2. Best available model excluding the stage model, excluded, unhealthy
         candidates = {
-            k: v for k, v in self._registry.items() if v.model != stage_model
+            k: v for k, v in self._registry.items()
+            if v.model != stage_model
+            and k not in exclude
+            and (not self._health or self._health.is_healthy(k))
         }
         if not candidates:
             raise RuntimeError(
-                f"No arbiter model available that differs from stage model "
-                f"'{stage_model}'. Register at least 2 models."
+                f"No arbiter model available for stage model "
+                f"'{stage_model}' (excluded={exclude})"
             )
 
         # Pick the candidate with the highest average fitness
