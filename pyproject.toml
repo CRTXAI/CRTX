@@ -27,6 +27,7 @@ dependencies = [
     "rich>=13.0",
     "tomli>=2.0",
     "aiofiles>=24.0",
+    "aiosqlite>=0.20",
     "jinja2>=3.0",
 ]
 
