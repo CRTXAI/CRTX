@@ -1,19 +1,30 @@
-"""Rich diff preview for apply mode.
+"""Rich diff preview and conflict resolution for apply mode.
 
 Renders an interactive preview of file changes before writing,
-with unified diff display and per-file selection.
+with unified diff display and per-file selection. Also provides
+an interactive conflict resolution UI for files modified after scan.
 """
 
 from __future__ import annotations
 
 import difflib
+import logging
+import time
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from triad.schemas.apply import FileAction, ResolvedFile
+from triad.schemas.apply import (
+    ConflictAction,
+    FileAction,
+    FileConflict,
+    Resolution,
+    ResolvedFile,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class DiffPreview:
@@ -194,3 +205,168 @@ class DiffPreview:
         f.selected = not f.selected
         state = "[green]selected[/green]" if f.selected else "[red]deselected[/red]"
         self._console.print(f"  {f.source_filepath}: {state}")
+
+
+# ── Conflict Resolution UI ────────────────────────────────────────
+
+
+class ConflictResolver:
+    """Interactive Rich UI for resolving file conflicts during apply.
+
+    Displays a panel for each conflicting file showing scan time vs
+    current modification time, and how many patch operations can
+    apply cleanly. Lets the user choose per-file actions.
+    """
+
+    def __init__(self, console: Console, interactive: bool = True) -> None:
+        self._console = console
+        self._interactive = interactive
+
+    def resolve(self, conflicts: list[FileConflict]) -> list[Resolution]:
+        """Show conflict panel and let user choose per-file action.
+
+        Args:
+            conflicts: List of files with detected conflicts.
+
+        Returns:
+            List of Resolution objects. Empty list means cancel all.
+        """
+        if not conflicts:
+            return []
+
+        resolutions: list[Resolution] = []
+
+        for conflict in conflicts:
+            self._print_conflict_panel(conflict)
+
+            if not self._interactive:
+                # Non-interactive: default to SKIP, log warning
+                logger.warning(
+                    "Conflict auto-skipped (non-interactive): %s",
+                    conflict.filepath,
+                )
+                resolutions.append(Resolution(
+                    filepath=conflict.filepath,
+                    action=ConflictAction.SKIP,
+                ))
+                continue
+
+            action = self._prompt_action(conflict)
+            if action is None:
+                # User chose cancel all
+                return []
+            resolutions.append(Resolution(
+                filepath=conflict.filepath,
+                action=action,
+            ))
+
+        return resolutions
+
+    def _print_conflict_panel(self, conflict: FileConflict) -> None:
+        """Render the conflict detail panel for a single file."""
+        text = Text()
+
+        # File path
+        filepath_short = conflict.filepath
+        # Try to show a shorter relative path
+        parts = filepath_short.replace("\\", "/").split("/")
+        if len(parts) > 3:
+            filepath_short = "/".join(parts[-3:])
+
+        text.append(f"  {filepath_short}", style="bold")
+        text.append(" was modified after context scan\n\n")
+
+        # Timestamps
+        scan_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(conflict.scan_time))
+        current_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(conflict.current_mtime))
+        text.append(f"  Context scanned:  {scan_str}\n", style="dim")
+        text.append(f"  File modified:    {current_str}\n\n", style="dim")
+
+        # Operation counts (if available)
+        if conflict.total_operations > 0:
+            text.append(
+                f"  {conflict.clean_operations} of {conflict.total_operations} "
+                f"patch operations can be applied cleanly\n"
+            )
+            text.append(
+                f"  {conflict.conflicting_operations} operations "
+                f"conflict with recent changes\n\n"
+            )
+
+        # Action hints
+        if self._interactive:
+            text.append("  [v] View conflicts  ", style="dim")
+            text.append("[p] Apply clean patches only\n", style="dim")
+            text.append("  [f] Force all       ", style="dim")
+            text.append("[s] Skip this file  ", style="dim")
+            text.append("[q] Cancel all\n", style="dim")
+
+        self._console.print(Panel(
+            text,
+            title="[bold yellow]Merge Conflict Detected[/bold yellow]",
+            border_style="yellow",
+        ))
+
+    def _prompt_action(self, conflict: FileConflict) -> ConflictAction | None:
+        """Prompt user for per-file conflict resolution.
+
+        Returns:
+            ConflictAction, or None to cancel all.
+        """
+        while True:
+            try:
+                choice = self._console.input(
+                    "[bold yellow]conflict>[/bold yellow] "
+                ).strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                return None
+
+            if choice == "v":
+                self._show_conflict_diff(conflict)
+                continue
+            if choice == "p":
+                return ConflictAction.APPLY_CLEAN
+            if choice == "f":
+                return ConflictAction.FORCE
+            if choice == "s":
+                return ConflictAction.SKIP
+            if choice == "q":
+                return None
+
+            self._console.print("[dim]Use v/p/f/s/q.[/dim]")
+
+    def _show_conflict_diff(self, conflict: FileConflict) -> None:
+        """Show unified diff between scanned content and current content."""
+        if not conflict.scanned_content or not conflict.current_content:
+            self._console.print("[dim]  No content available for diff.[/dim]")
+            return
+
+        old_lines = conflict.scanned_content.splitlines(keepends=True)
+        new_lines = conflict.current_content.splitlines(keepends=True)
+        diff = difflib.unified_diff(
+            old_lines, new_lines,
+            fromfile="scanned",
+            tofile="current",
+        )
+
+        text = Text()
+        for line in diff:
+            line = line.rstrip("\n")
+            if line.startswith("+"):
+                text.append(f"{line}\n", style="green")
+            elif line.startswith("-"):
+                text.append(f"{line}\n", style="red")
+            elif line.startswith("@@"):
+                text.append(f"{line}\n", style="cyan")
+            else:
+                text.append(f"{line}\n")
+
+        if not text.plain.strip():
+            self._console.print("[dim]  Files are identical.[/dim]")
+            return
+
+        self._console.print(Panel(
+            text,
+            title=f"[bold]Changes since scan[/bold]",
+            border_style="yellow",
+        ))

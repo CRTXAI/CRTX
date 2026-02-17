@@ -140,3 +140,34 @@ class PatchResult(BaseModel):
         default=True, description="Whether post-patch validation passed"
     )
     error: str = Field(default="", description="Error message if patch failed")
+
+
+# ── Conflict Resolution ──────────────────────────────────────────
+
+
+class ConflictAction(StrEnum):
+    """User-chosen action for a conflicting file."""
+
+    APPLY_CLEAN = "apply_clean"
+    FORCE = "force"
+    SKIP = "skip"
+
+
+class FileConflict(BaseModel):
+    """Details about a file that was modified after context scan."""
+
+    filepath: str = Field(description="Absolute path to conflicting file")
+    scan_time: float = Field(description="Unix timestamp of context scan")
+    current_mtime: float = Field(description="Current file modification time")
+    total_operations: int = Field(default=0, description="Total patch operations for this file")
+    clean_operations: int = Field(default=0, description="Operations that apply cleanly")
+    conflicting_operations: int = Field(default=0, description="Operations that conflict")
+    scanned_content: str = Field(default="", description="File content at scan time")
+    current_content: str = Field(default="", description="File content now")
+
+
+class Resolution(BaseModel):
+    """User's chosen resolution for a conflicting file."""
+
+    filepath: str = Field(description="Path of the resolved file")
+    action: ConflictAction = Field(description="What to do with this file")

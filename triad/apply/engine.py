@@ -14,11 +14,20 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from triad.apply.diff import DiffPreview
+from triad.apply.conflict import ConflictDetector
+from triad.apply.diff import ConflictResolver, DiffPreview
 from triad.apply.git import GitSafetyGate
 from triad.apply.resolver import FilePathResolver, extract_code_blocks_from_result
 from triad.apply.verify import PostApplyVerifier
-from triad.schemas.apply import ApplyConfig, ApplyResult, FileAction, GitState, ResolvedFile
+from triad.schemas.apply import (
+    ApplyConfig,
+    ApplyResult,
+    ConflictAction,
+    FileAction,
+    FileConflict,
+    GitState,
+    ResolvedFile,
+)
 from triad.schemas.pipeline import PipelineResult
 
 logger = logging.getLogger(__name__)
@@ -118,6 +127,58 @@ class ApplyEngine:
 
         resolver = FilePathResolver(self._context_dir, self._config)
         resolved = resolver.resolve(blocks)
+
+        # ── 2b. Conflict detection ────────────────────────────────
+        detector = ConflictDetector()
+        for f in resolved:
+            if f.action == FileAction.OVERWRITE:
+                detector.snapshot(f.resolved_path)
+
+        conflict_paths = detector.check_all()
+        if conflict_paths:
+            file_conflicts = []
+            for fp in conflict_paths:
+                snap = detector._snapshots.get(fp)
+                scan_time = snap[0] if snap else 0.0
+                current_mtime = Path(fp).stat().st_mtime if Path(fp).exists() else 0.0
+                scanned = ""
+                current = ""
+                if Path(fp).exists():
+                    current = Path(fp).read_text(encoding="utf-8", errors="replace")
+                # Find the resolved file to get content at scan time
+                for rf in resolved:
+                    if rf.resolved_path == fp and rf.existing_content is not None:
+                        scanned = rf.existing_content
+                        break
+
+                file_conflicts.append(FileConflict(
+                    filepath=fp,
+                    scan_time=scan_time,
+                    current_mtime=current_mtime,
+                    scanned_content=scanned,
+                    current_content=current,
+                ))
+
+            cr = ConflictResolver(self._console, interactive=self._interactive)
+            resolutions = cr.resolve(file_conflicts)
+
+            if not resolutions and file_conflicts:
+                # User cancelled all
+                self._console.print("[dim]Apply cancelled.[/dim]")
+                return ApplyResult(
+                    session_id=self._result.session_id,
+                    git_state=git_state,
+                    errors=["Apply cancelled due to conflicts"],
+                )
+
+            # Apply resolution decisions
+            skip_paths = {
+                r.filepath for r in resolutions
+                if r.action == ConflictAction.SKIP
+            }
+            for f in resolved:
+                if f.resolved_path in skip_paths:
+                    f.selected = False
 
         # ── 3. Baseline test run ─────────────────────────────────
         if self._config.test_command and self._config.rollback_on_fail:
