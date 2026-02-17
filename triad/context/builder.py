@@ -28,12 +28,19 @@ class ContextBuilder:
     Scores each file's relevance to the task, selects files until the
     token budget is filled, and assembles them into a formatted context
     string for injection into pipeline prompts.
+
+    When the budget allows, the top files get full source contents instead
+    of just signatures/previews, giving downstream models enough context
+    to write assertions against actual function behavior.
     """
+
+    # Maximum number of files to include with full source contents
+    _MAX_FULL_CONTENT_FILES = 10
 
     def __init__(
         self,
         root_path: str,
-        token_budget: int = 8000,
+        token_budget: int = 20000,
     ) -> None:
         self._root_path = root_path
         self._token_budget = token_budget
@@ -75,14 +82,30 @@ class ContextBuilder:
             context_lines.append(header)
             chars_used += header_chars
 
+        full_content_count = 0
         for f in ranked:
-            entry = self._format_file_entry(f)
+            # Include full source for the most relevant files
+            include_full = (
+                full_content_count < self._MAX_FULL_CONTENT_FILES
+                and f.relevance_score >= 0.15
+            )
+            entry = self._format_file_entry(f, include_full=include_full)
             entry_chars = len(entry)
 
             if chars_used + entry_chars > char_budget:
-                truncated = True
-                break
+                # Try again with signature-only if full was too large
+                if include_full:
+                    entry = self._format_file_entry(f, include_full=False)
+                    entry_chars = len(entry)
+                    if chars_used + entry_chars > char_budget:
+                        truncated = True
+                        break
+                else:
+                    truncated = True
+                    break
 
+            if include_full:
+                full_content_count += 1
             context_lines.append(entry)
             chars_used += entry_chars
             files_included += 1
@@ -211,6 +234,12 @@ class ContextBuilder:
         if "config" in path_lower or "settings" in path_lower:
             score += 0.05
 
+        # Service/business logic bonus — most testable files
+        if "service" in path_lower or "handler" in path_lower:
+            score += 0.10
+        if "controller" in path_lower or "view" in path_lower:
+            score += 0.05
+
         # Size penalty for very large files
         if f.size_bytes > 50_000:
             score *= 0.8
@@ -244,9 +273,29 @@ class ContextBuilder:
         lines.append("")
         return "\n".join(lines)
 
-    def _format_file_entry(self, f: ScannedFile) -> str:
-        """Format a single file as a context entry."""
+    def _format_file_entry(
+        self, f: ScannedFile, *, include_full: bool = False,
+    ) -> str:
+        """Format a single file as a context entry.
+
+        Args:
+            f: The scanned file to format.
+            include_full: If True, read and include the complete file source
+                instead of just signatures/preview. Gives models enough
+                context to write assertions against actual function behavior.
+        """
         lines = [f"### {f.path} ({f.language}, {f.size_bytes:,} bytes)"]
+
+        if include_full:
+            # Include complete file source for high-relevance files
+            full_source = self._read_full_source(f.path)
+            if full_source:
+                lines.append(f"```{f.language}")
+                lines.append(full_source)
+                lines.append("```")
+                lines.append("")
+                return "\n".join(lines)
+            # Fall through to signature-only if read fails
 
         if f.docstring:
             lines.append(f"  Docstring: {f.docstring[:200]}")
@@ -282,3 +331,13 @@ class ContextBuilder:
 
         lines.append("")
         return "\n".join(lines)
+
+    def _read_full_source(self, rel_path: str) -> str | None:
+        """Read the full source of a file by its relative path."""
+        from pathlib import Path
+
+        full_path = Path(self._root_path) / rel_path
+        try:
+            return full_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None

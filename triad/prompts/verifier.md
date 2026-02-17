@@ -22,6 +22,12 @@ You are the **Verifier** in a multi-model AI code generation pipeline. You are t
 
 {{ architect_output }}
 
+{% if implement_output %}
+## Implementation (before Refactoring)
+
+{{ implement_output }}
+
+{% endif %}
 ## Final Code (after Refactoring)
 
 {{ previous_output }}

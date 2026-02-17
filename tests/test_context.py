@@ -173,7 +173,7 @@ class TestSchemas:
         assert cfg.context_dir is None
         assert cfg.context_include == ["*.py"]
         assert cfg.context_exclude == []
-        assert cfg.context_token_budget == 8000
+        assert cfg.context_token_budget == 20000
 
     def test_pipeline_config_context_custom(self):
         cfg = PipelineConfig(

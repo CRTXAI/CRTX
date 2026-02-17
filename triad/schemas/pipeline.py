@@ -184,7 +184,7 @@ class PipelineConfig(BaseModel):
         description="Glob patterns for files to exclude from context scanning",
     )
     context_token_budget: int = Field(
-        default=8000, gt=0,
+        default=20000, gt=0,
         description="Max tokens to allocate for injected project context",
     )
 
