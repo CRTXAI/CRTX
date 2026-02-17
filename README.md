@@ -2,6 +2,10 @@
   <img src="assets/banner.svg" alt="Triad Orchestrator" width="800"/>
 </p>
 
+<!-- TODO: Replace with terminal recording (asciinema/VHS) showing:
+     triad setup → triad (REPL + logo) → task → config screen → live display → summary -->
+<!-- <p align="center"><img src="assets/demo.gif" alt="Triad CLI demo" width="700"/></p> -->
+
 <p align="center">
   <strong>Coordinate multiple AI models into a single, verified code generation pipeline.</strong>
 </p>
@@ -45,27 +49,68 @@ Each model does what it's best at. A different model checks the work. The code t
 
 ## Quick Start
 
-### Install
 ```bash
 pip install triad-orchestrator
+triad setup          # Interactive API key configuration
+triad                # Launch interactive session
 ```
 
-### Configure
+That's it. `triad setup` walks you through API key configuration with live validation. `triad` launches an interactive session with a branded terminal UI, real-time pipeline status, and a persistent REPL.
+
+---
+
+## Getting Started
+
+### First-Time Setup
+
 ```bash
-cp .env.example .env
-# Add your API keys:
-#   ANTHROPIC_API_KEY=sk-ant-...
-#   OPENAI_API_KEY=sk-...
-#   GOOGLE_API_KEY=...
-#   XAI_API_KEY=...
+triad setup
 ```
 
-### Run
+Interactive wizard that prompts for API keys (Anthropic, OpenAI, Google, xAI), validates each key against its provider, and saves them to `~/.triad/keys.env`. You need at least one provider configured.
+
 ```bash
-triad run --task "Build a REST API with JWT authentication and rate limiting"
+triad setup --check    # Validate existing keys without re-prompting
+triad setup --reset    # Clear saved keys and reconfigure
 ```
 
-That's it. Triad assigns models to roles, runs the pipeline, and the Arbiter reviews the output at each stage. You get production-ready code, tests, and a full audit trail.
+### Interactive Session (REPL)
+
+```bash
+triad
+```
+
+Launches the interactive REPL with the branded Triad logo. The REPL maintains session state — set your mode, routing strategy, and arbiter depth once, then run multiple tasks without repeating flags.
+
+```
+triad ▸ mode parallel
+  Mode set to parallel
+
+triad ▸ route quality_first
+  Route set to quality_first
+
+triad ▸ Build a REST API with JWT authentication and rate limiting
+  # → Interactive config screen → real-time pipeline display → completion summary
+
+triad ▸ status
+  Mode:    parallel
+  Route:   quality_first
+  Arbiter: bookend
+```
+
+Type `help` for all commands, `exit` or Ctrl+C to quit.
+
+### Direct Execution
+
+```bash
+# Run with interactive config screen (choose mode/route/arbiter before launch)
+triad run "Build a REST API with JWT authentication and rate limiting"
+
+# Run with explicit flags (skips config screen)
+triad run "Build a REST API" --mode sequential --route hybrid --arbiter bookend
+```
+
+When you run without explicit flags, Triad shows an interactive config screen where you can cycle through modes, routing strategies, and arbiter settings with single keypresses before confirming. With explicit flags, the pipeline starts immediately.
 
 ---
 
@@ -180,10 +225,41 @@ triad estimate --task "..." --compare-routes   # Compare costs
 
 ---
 
+## Configuration
+
+### API Keys
+
+The recommended way to configure API keys is `triad setup`, which validates keys and saves them for future sessions. Keys are loaded in this order (highest priority first):
+
+1. **Environment variables** — `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `XAI_API_KEY`
+2. **`~/.triad/keys.env`** — User-level keys saved by `triad setup`
+3. **`.env` in current directory** — Project-level overrides
+
+You only need keys for the providers you want to use. At least one provider must be configured.
+
+```bash
+# Recommended: interactive setup with validation
+triad setup
+
+# Or set environment variables directly
+export ANTHROPIC_API_KEY=sk-ant-...
+export OPENAI_API_KEY=sk-...
+```
+
+### Pipeline Defaults
+
+Pipeline defaults (mode, routing strategy, arbiter depth, timeout) are configured in `config/defaults.toml`. These can be overridden per-run via CLI flags or the interactive config screen.
+
+---
+
 ## CLI Commands
 
 | Command | Description |
 |---------|-------------|
+| `triad` | Launch interactive session (REPL mode) |
+| `triad setup` | Configure API keys interactively |
+| `triad setup --check` | Validate existing API keys |
+| `triad setup --reset` | Clear keys and reconfigure |
 | `triad run` | Run a full pipeline on a task |
 | `triad plan` | Expand a rough idea into a structured task spec |
 | `triad estimate` | Estimate cost before running |
@@ -196,8 +272,14 @@ triad estimate --task "..." --compare-routes   # Compare costs
 | `triad dashboard` | Launch real-time browser visualization |
 
 ```bash
-# Run a task with default settings
-triad run --task "Add WebSocket support to the existing Express server"
+# Interactive session — persistent state, branded UI
+triad
+
+# Run a task with interactive config screen
+triad run "Add WebSocket support to the existing Express server"
+
+# Run with explicit flags (skips config screen)
+triad run "Add WebSocket support" --mode sequential --route hybrid --arbiter bookend
 
 # Plan first, then run
 triad plan "Build a data processing pipeline" --run
@@ -209,7 +291,7 @@ triad review --diff changes.patch --fail-on critical
 triad dashboard --port 8420
 ```
 
-The CLI uses [Rich](https://github.com/Textualize/rich) for live terminal output — real-time agent status, streaming responses, color-coded Arbiter verdicts, and a cost summary when the pipeline completes.
+The CLI uses [Rich](https://github.com/Textualize/rich) for a premium terminal experience — branded ASCII art, interactive config screens, real-time pipeline status with stage-by-stage progress, color-coded Arbiter verdicts, and a post-completion summary with export actions.
 
 ---
 

@@ -132,8 +132,6 @@ def setup(
         PROVIDER_NAMES,
         PROVIDERS,
         clear_keys,
-        get_configured_keys,
-        has_any_key,
         save_keys,
         validate_key,
     )
@@ -200,9 +198,9 @@ def setup(
 
         if key.strip():
             collected_keys[env_var] = key.strip()
-            console.print(f"      [green]✓ Set[/green]\n")
+            console.print("      [green]✓ Set[/green]\n")
         else:
-            console.print(f"      [dim]⊘ Skipped[/dim]\n")
+            console.print("      [dim]⊘ Skipped[/dim]\n")
 
     # Check at least one key provided
     if not collected_keys:
@@ -281,7 +279,8 @@ def setup(
     )
     console.print()
     console.print(
-        "  Run [bold]triad[/bold] to start, or [bold]triad run \"your task\"[/bold] for a quick test.\n"
+        "  Run [bold]triad[/bold] to start, or "
+        "[bold]triad run \"your task\"[/bold] for a quick test.\n"
     )
 
 
@@ -293,7 +292,10 @@ def _setup_check() -> None:
 
     has_any = any(keys.values())
     if not has_any:
-        console.print("[dim]No API keys configured.[/dim] Run [bold]triad setup[/bold] to get started.")
+        console.print(
+            "[dim]No API keys configured.[/dim] "
+            "Run [bold]triad setup[/bold] to get started."
+        )
         raise typer.Exit(1) from None
 
     async def _validate_all():
@@ -418,8 +420,10 @@ def run(
     if arbiter is None:
         arbiter = base_config.arbiter_mode.value
 
-    # Interactive config screen when no explicit flags
-    if not explicit_flags:
+    # Interactive config screen when no explicit flags and running interactively
+    from triad.cli_display import is_interactive as _is_interactive
+
+    if not explicit_flags and _is_interactive():
         config_screen = ConfigScreen(task, base_config, registry)
         result = config_screen.show(console)
         if result is None:
@@ -490,19 +494,32 @@ def run(
         output_dir=output_dir,
     )
 
-    # Run pipeline with real-time display and event emitter
+    # Run pipeline
+    from triad.cli_display import is_interactive
     from triad.dashboard.events import PipelineEventEmitter
     from triad.orchestrator import run_pipeline
 
+    interactive = is_interactive()
     emitter = PipelineEventEmitter()
-    display = PipelineDisplay(console, mode, route, arbiter)
-    emitter.add_listener(display.create_listener())
 
-    live = display.start()
-    try:
-        pipeline_result = asyncio.run(run_pipeline(task_spec, config, registry, emitter))
-    finally:
-        display.stop()
+    if interactive:
+        display = PipelineDisplay(console, mode, route, arbiter)
+        emitter.add_listener(display.create_listener())
+        display.start()
+        try:
+            pipeline_result = asyncio.run(
+                run_pipeline(task_spec, config, registry, emitter),
+            )
+        finally:
+            display.stop()
+    else:
+        # Non-interactive: show static task panel + spinner
+        _display_task_panel(task_spec, config)
+        console.print()
+        with console.status("[bold blue]Running pipeline...", spinner="dots"):
+            pipeline_result = asyncio.run(
+                run_pipeline(task_spec, config, registry, emitter),
+            )
 
     # Display results
     console.print()
@@ -514,18 +531,18 @@ def run(
     write_pipeline_output(pipeline_result, output_dir)
     console.print(f"\n[dim]Output written to:[/dim] {output_dir}/")
 
-    # Interactive completion summary
-    summary = CompletionSummary(console, pipeline_result, output_dir)
-    action = summary.show()
-    if action == "rerun":
-        # Re-invoke the run command with same arguments
-        run(
-            task=task, mode=mode, route=route, arbiter=arbiter,
-            reconcile=reconcile, context=context, domain_rules=domain_rules,
-            timeout=timeout, max_retries=max_retries, no_persist=no_persist,
-            output_dir=output_dir, context_dir=context_dir, include=include,
-            exclude=exclude, context_budget=context_budget,
-        )
+    # Interactive completion summary (only in real terminals)
+    if interactive:
+        summary = CompletionSummary(console, pipeline_result, output_dir)
+        action = summary.show()
+        if action == "rerun":
+            run(
+                task=task, mode=mode, route=route, arbiter=arbiter,
+                reconcile=reconcile, context=context, domain_rules=domain_rules,
+                timeout=timeout, max_retries=max_retries, no_persist=no_persist,
+                output_dir=output_dir, context_dir=context_dir, include=include,
+                exclude=exclude, context_budget=context_budget,
+            )
 
 
 def _display_task_panel(task_spec: TaskSpec, config: PipelineConfig) -> None:
