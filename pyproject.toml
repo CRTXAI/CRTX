@@ -13,6 +13,12 @@ authors = [
     { name = "NexusAI" },
 ]
 keywords = ["ai", "llm", "orchestrator", "multi-model", "pipeline"]
+
+[project.urls]
+Homepage = "https://triad-orchestrator.com"
+Repository = "https://github.com/NexusAI-Holdings/triad-orchestrator"
+Documentation = "https://github.com/NexusAI-Holdings/triad-orchestrator/tree/main/docs"
+Issues = "https://github.com/NexusAI-Holdings/triad-orchestrator/issues"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Programming Language :: Python :: 3.12",

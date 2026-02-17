@@ -145,25 +145,71 @@ DeepSeek, Llama, Mistral, Ollama (local), vLLM (self-hosted) — if LiteLLM supp
 
 ---
 
-## CLI
+## Pipeline Modes
+
+| Mode | How It Works | Best For |
+|------|-------------|----------|
+| **Sequential** (default) | Architect → Implement → Refactor → Verify, each building on the last | Standard development, most tasks |
+| **Parallel** | All models solve independently, cross-review, vote on best, synthesize | Exploring multiple approaches |
+| **Debate** | Position papers → rebuttals → final arguments → judgment | Architectural decisions, tradeoff analysis |
+
+```bash
+triad run --task "..." --mode sequential   # Default
+triad run --task "..." --mode parallel     # Fan-out + consensus
+triad run --task "..." --mode debate       # Structured debate
+```
+
+---
+
+## Smart Routing
+
+Triad assigns models to pipeline roles based on fitness benchmarks — each model is scored on how well it performs as Architect, Implementer, Refactorer, and Verifier. Four routing strategies let you optimize for what matters:
+
+| Strategy | Behavior |
+|----------|----------|
+| **quality-first** | Best model per role regardless of cost |
+| **cost-optimized** | Cheapest model above fitness threshold |
+| **speed-first** | Lowest-latency models preferred |
+| **hybrid** (default) | Quality for critical stages, cost-optimized for early stages |
+
+```bash
+triad run --task "..." --route hybrid          # Default
+triad run --task "..." --route quality-first   # Max quality
+triad estimate --task "..." --compare-routes   # Compare costs
+```
+
+---
+
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `triad run` | Run a full pipeline on a task |
+| `triad plan` | Expand a rough idea into a structured task spec |
+| `triad estimate` | Estimate cost before running |
+| `triad review` | Multi-model PR review (CI/CD integration) |
+| `triad models list` | Show registered models with fitness scores |
+| `triad models check` | Verify API key connectivity |
+| `triad config show` | Display current pipeline configuration |
+| `triad sessions list` | Browse past pipeline runs |
+| `triad sessions show` | View full session details |
+| `triad dashboard` | Launch real-time browser visualization |
+
 ```bash
 # Run a task with default settings
 triad run --task "Add WebSocket support to the existing Express server"
 
-# Specify models explicitly
-triad run --task "..." --architect gemini-2.5-pro --implement gpt-4o --refactor claude-sonnet
+# Plan first, then run
+triad plan "Build a data processing pipeline" --run
 
-# Force a specific Arbiter model
-triad run --task "..." --arbiter-model grok-4
+# Review a PR diff
+triad review --diff changes.patch --fail-on critical
 
-# List available models and their fitness scores
-triad models list
-
-# Show current configuration
-triad config show
+# Launch the real-time dashboard
+triad dashboard --port 8420
 ```
 
-The CLI uses [Rich](https://github.com/Textualize/rich) for live terminal output — you'll see real-time agent status, streaming responses, color-coded Arbiter verdicts, and a cost summary when the pipeline completes.
+The CLI uses [Rich](https://github.com/Textualize/rich) for live terminal output — real-time agent status, streaming responses, color-coded Arbiter verdicts, and a cost summary when the pipeline completes.
 
 ---
 
@@ -218,6 +264,29 @@ At the default Bookend depth and ~15 tasks/week, the Arbiter adds about **$90/mo
 | [Model-Agnostic System](docs/model-agnostic.md) | Plugin architecture, LiteLLM adapter, dynamic role assignment |
 | [Arbiter Layer](docs/arbiter.md) | Independent review system, verdicts, feedback injection |
 | [Build Spec](docs/build-spec.md) | MVP scope, day-by-day build plan, technical decisions |
+
+---
+
+## Architecture
+
+```
+triad/
+├── cli.py                  # Typer + Rich terminal interface
+├── orchestrator.py         # Pipeline engine (sequential, parallel, debate)
+├── planner.py              # Task planner (triad plan)
+├── providers/              # LiteLLM adapter + model registry
+├── routing/                # Fitness-based model-to-role assignment
+├── arbiter/                # Independent adversarial review engine
+├── consensus/              # Cross-domain suggestions + voting protocol
+├── context/                # AST-aware codebase scanner + context builder
+├── persistence/            # SQLite session storage + export
+├── ci/                     # Multi-model PR review for CI/CD
+├── dashboard/              # Real-time WebSocket visualization (optional)
+├── schemas/                # Pydantic v2 models (all data contracts)
+├── prompts/                # Jinja2 role prompt templates
+├── output/                 # File writer + Markdown report renderer
+└── config/                 # TOML configuration (models, defaults, routing)
+```
 
 ---
 

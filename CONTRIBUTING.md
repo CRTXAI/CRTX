@@ -61,6 +61,38 @@ Key conventions:
 5. Keep PRs focused — one feature or fix per PR
 6. Write a clear PR description explaining what and why
 
+## Adding a New Model
+
+Adding a new model requires **no code changes** — just a TOML entry:
+
+```toml
+# config/models.toml
+[models.your-model]
+provider = "provider-name"        # Must be supported by LiteLLM
+model = "provider/model-id"
+display_name = "Your Model"
+api_key_env = "YOUR_API_KEY"
+context_window = 128000
+cost_input = 1.0                  # Per million tokens
+cost_output = 3.0
+
+[models.your-model.fitness]
+architect = 0.80
+implementer = 0.75
+refactorer = 0.70
+verifier = 0.75
+```
+
+LiteLLM handles the provider adapter automatically. If LiteLLM supports it, Triad supports it.
+
+## Adding a New Pipeline Mode
+
+1. Create an orchestrator class in `triad/orchestrator.py` following the pattern of `ParallelOrchestrator` or `DebateOrchestrator`
+2. Add any needed prompt templates to `triad/prompts/`
+3. Register the mode in the `PipelineMode` enum in `triad/schemas/pipeline.py`
+4. Add routing in `run_pipeline()` dispatcher
+5. Write tests covering the full mode lifecycle
+
 ## What to Contribute
 
 We welcome contributions in these areas:
