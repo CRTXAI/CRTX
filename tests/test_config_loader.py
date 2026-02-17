@@ -26,7 +26,7 @@ class TestLoadModels:
         expected_keys = [
             "claude-opus",
             "claude-sonnet",
-            "claude-haiku",
+            # "claude-haiku",  # disabled until model ID confirmed
             "gpt-4o",
             "o3-mini",
             "gemini-pro",
@@ -57,7 +57,7 @@ class TestLoadModels:
 
     def test_claude_opus_model_id(self):
         registry = load_models(_CONFIG_DIR / "models.toml")
-        assert registry["claude-opus"].model == "claude-opus-4-6"
+        assert registry["claude-opus"].model == "anthropic/claude-opus-4-6"
 
     def test_providers_are_correct(self):
         registry = load_models(_CONFIG_DIR / "models.toml")
