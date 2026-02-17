@@ -215,7 +215,7 @@ class TestRun:
             ])
 
         assert result.exit_code == 0
-        assert "Pipeline completed successfully" in result.output
+        assert "PIPELINE COMPLETED SUCCESSFULLY" in result.output
         mock_write.assert_called_once()
 
     def test_run_shows_halted_result(self):
@@ -252,7 +252,7 @@ class TestRun:
             ])
 
         assert result.exit_code == 0
-        assert "$0.2500" in result.output
+        assert "$0.25" in result.output
         assert "6,000" in result.output
 
     def test_run_domain_rules_missing_file(self):
@@ -723,7 +723,7 @@ class TestCliParallelDisplay:
             ])
 
         assert result.exit_code == 0
-        assert "$0.5000" in result.output
+        assert "$0.50" in result.output
 
 
 # ── CLI Debate Display Tests ─────────────────────────────────────
@@ -824,7 +824,7 @@ class TestCliDebateDisplay:
             ])
 
         assert result.exit_code == 0
-        assert "$0.7500" in result.output
+        assert "$0.75" in result.output
 
     def test_debate_halted_shows_halt_reason(self):
         """triad run with halted debate shows halt reason."""

@@ -443,7 +443,6 @@ def run(
         raise typer.Exit(1) from None
 
     from triad.cli_display import (
-        CompletionSummary,
         ConfigScreen,
         PipelineDisplay,
     )
@@ -544,6 +543,13 @@ def run(
     interactive = is_interactive()
     emitter = PipelineEventEmitter()
 
+    # Attach ProAgent for dashboard event forwarding (if configured)
+    from triad.pro.agent import ProAgent
+
+    _pro_agent = ProAgent.from_config()
+    if _pro_agent:
+        emitter.add_listener(_pro_agent.create_listener())
+
     # Streaming display selection
     use_streaming = (
         interactive
@@ -588,15 +594,10 @@ def run(
                     run_pipeline(task_spec, config, registry, emitter),
                 )
 
-    # Display results
-    console.print()
-    _display_result(pipeline_result)
-
     # Write output files
     from triad.output.writer import write_pipeline_output
 
     actual_path = write_pipeline_output(pipeline_result, output_dir)
-    console.print(f"\n[dim]Output written to:[/dim] {actual_path}/")
 
     # Apply mode
     if apply:
@@ -618,10 +619,15 @@ def run(
         apply_result = engine.run()
         _display_apply_result(apply_result)
 
-    # Interactive completion summary (only in real terminals)
+    # Display completion panel with side-by-side tables + menu
+    _display_completion(pipeline_result, actual_path)
+
+    # Interactive post-run viewer (only in real terminals)
     if interactive:
-        summary = CompletionSummary(console, pipeline_result, actual_path)
-        action = summary.show()
+        from triad.post_run_viewer import PostRunViewer
+
+        viewer = PostRunViewer(console, Path(actual_path), pipeline_result)
+        action = viewer.run()
         if action == "rerun":
             run(
                 task=task, mode=mode, route=route, arbiter=arbiter,
@@ -669,82 +675,148 @@ def _display_name_from_litellm_id(litellm_id: str) -> str:
     return litellm_id
 
 
-def _display_result(result) -> None:
-    """Display the pipeline result with colored verdicts and metrics."""
+def _format_duration(seconds: float) -> str:
+    """Format seconds into a human-readable duration string."""
+    minutes = int(seconds // 60)
+    secs = int(seconds % 60)
+    if minutes > 0:
+        return f"{minutes}:{secs:02d}"
+    return f"{secs}s"
 
-    # Status banner
-    if result.halted:
-        console.print(Panel(
-            f"[bright_red]HALTED[/bright_red] — {result.halt_reason}",
-            border_style="bright_red",
-        ))
-    elif result.success:
-        console.print(Panel(
-            "[bold green]Pipeline completed successfully[/bold green]",
-            border_style="green",
-        ))
-    else:
-        console.print(Panel(
-            "[bold red]Pipeline failed[/bold red]",
-            border_style="red",
-        ))
 
-    # Arbiter verdicts
+_STAGE_COLORS = {
+    "architect": "cyan",
+    "implement": "green",
+    "refactor": "yellow",
+    "verify": "magenta",
+}
+
+_VERDICT_COLORS = {
+    "approve": "green",
+    "flag": "yellow",
+    "reject": "red",
+    "halt": "bold red",
+}
+
+
+def _display_completion(
+    result, output_path: str = "", show_menu: bool = True,
+) -> None:
+    """Display the completion panel with side-by-side tables.
+
+    Shows routing decisions and arbiter verdicts side-by-side,
+    followed by a green completion box with metrics and menu keys.
+    """
+    import rich.box
+    from rich.columns import Columns
+
+    # ── Side-by-side tables ──────────────────────────────────
+
+    tables = []
+
+    # Routing decisions table
+    if result.routing_decisions:
+        routing_table = Table(
+            title="Routing Decisions",
+            title_style="dim",
+            show_header=True,
+            header_style="bold bright_blue",
+            border_style="dim",
+            box=rich.box.ROUNDED,
+            padding=(0, 1),
+        )
+        routing_table.add_column("Stage", style="bold")
+        routing_table.add_column("Model")
+        routing_table.add_column("Fitness", justify="center")
+        routing_table.add_column("Est. Cost", justify="right")
+
+        for d in result.routing_decisions:
+            stage_val = d.role.value
+            stage_color = _STAGE_COLORS.get(stage_val, "white")
+            routing_table.add_row(
+                f"[{stage_color}]{stage_val}[/]",
+                d.model_key,
+                f"{d.fitness_score:.2f}",
+                f"${d.estimated_cost:.3f}",
+            )
+        tables.append(routing_table)
+
+    # Arbiter verdicts table
     if result.arbiter_reviews:
-        table = Table(title="Arbiter Verdicts", show_lines=True)
-        table.add_column("Stage", style="cyan")
-        table.add_column("Verdict")
-        table.add_column("Arbiter Model", style="dim")
-        table.add_column("Confidence", justify="right")
-        table.add_column("Cost", justify="right")
+        arbiter_table = Table(
+            title="Arbiter Verdicts",
+            title_style="dim",
+            show_header=True,
+            header_style="bold bright_blue",
+            border_style="dim",
+            box=rich.box.ROUNDED,
+            padding=(0, 1),
+        )
+        arbiter_table.add_column("Stage", style="bold")
+        arbiter_table.add_column("Verdict")
+        arbiter_table.add_column("Model")
+        arbiter_table.add_column("Conf.", justify="center")
 
         for review in result.arbiter_reviews:
-            style = _verdict_style(review.verdict.value)
-            table.add_row(
-                review.stage_reviewed.value,
-                Text(review.verdict.value.upper(), style=style),
+            stage_val = review.stage_reviewed.value
+            stage_color = _STAGE_COLORS.get(stage_val, "white")
+            verdict_val = review.verdict.value
+            v_color = _VERDICT_COLORS.get(verdict_val, "white")
+            arbiter_table.add_row(
+                f"[{stage_color}]{stage_val}[/]",
+                f"[{v_color}]{verdict_val.upper()}[/]",
                 _display_name_from_litellm_id(review.arbiter_model),
                 f"{review.confidence:.2f}",
-                f"${review.token_cost:.4f}",
             )
-        console.print(table)
-        console.print()
+        tables.append(arbiter_table)
 
-    # Model fallbacks
+    if tables:
+        console.print()
+        console.print(Columns(tables, padding=(0, 3)))
+
+    # ── Model fallbacks (if any) ─────────────────────────────
+
     if result.model_fallbacks:
-        fb_table = Table(title="Model Fallbacks", show_lines=True)
-        fb_table.add_column("Stage", style="cyan")
+        fb_table = Table(
+            title="Model Fallbacks",
+            title_style="dim",
+            show_header=True,
+            header_style="bold bright_blue",
+            border_style="dim",
+            box=rich.box.ROUNDED,
+            padding=(0, 1),
+        )
+        fb_table.add_column("Stage", style="bold")
         fb_table.add_column("Original")
         fb_table.add_column("Fallback")
         fb_table.add_column("Reason", style="dim", no_wrap=False, max_width=30)
 
         for fb in result.model_fallbacks:
+            stage_val = fb.get("stage", "?")
+            stage_color = _STAGE_COLORS.get(stage_val, "white")
             orig = fb.get("original", "?")
-            orig_fit = fb.get("original_fitness", 0)
             fallback = fb.get("fallback", "?")
-            fallback_fit = fb.get("fallback_fitness", 0)
             reason = fb.get("reason", "")
             fb_table.add_row(
-                fb.get("stage", "?"),
-                f"{orig} (fitness {orig_fit:.2f})",
-                f"{fallback} (fitness {fallback_fit:.2f})",
+                f"[{stage_color}]{stage_val}[/]",
+                orig,
+                fallback,
                 reason,
             )
-        console.print(fb_table)
         console.print()
+        console.print(fb_table)
 
-    # Parallel mode results
-    if isinstance(getattr(result, 'parallel_result', None), ParallelResult):
+    # ── Parallel mode results ────────────────────────────────
+
+    if isinstance(getattr(result, "parallel_result", None), ParallelResult):
         pr = result.parallel_result
-
-        # Winner banner
+        console.print()
         console.print(Panel(
             f"[bold green]Winner: {pr.winner}[/bold green]",
             title="[bold]Parallel Exploration[/bold]",
             border_style="green",
         ))
 
-        # Voting table
         if pr.votes:
             vote_table = Table(title="Consensus Votes")
             vote_table.add_column("Voter", style="cyan")
@@ -753,84 +825,101 @@ def _display_result(result) -> None:
                 style = "bold green" if voted_for == pr.winner else ""
                 vote_table.add_row(voter, Text(voted_for, style=style))
             console.print(vote_table)
-            console.print()
 
-        # Cross-review scores
-        if pr.scores:
-            score_table = Table(title="Cross-Review Scores", show_lines=True)
-            score_table.add_column("Reviewer", style="cyan")
-            score_table.add_column("Reviewed")
-            score_table.add_column("Arch", justify="right")
-            score_table.add_column("Impl", justify="right")
-            score_table.add_column("Quality", justify="right")
-            score_table.add_column("Total", justify="right", style="bold")
-            for reviewer, targets in pr.scores.items():
-                for reviewed, scores in targets.items():
-                    total = sum(scores.values())
-                    score_table.add_row(
-                        reviewer, reviewed,
-                        str(scores.get("architecture", "-")),
-                        str(scores.get("implementation", "-")),
-                        str(scores.get("quality", "-")),
-                        str(total),
-                    )
-            console.print(score_table)
-            console.print()
+    # ── Debate mode results ──────────────────────────────────
 
-    # Debate mode results
-    if isinstance(getattr(result, 'debate_result', None), DebateResult):
+    if isinstance(getattr(result, "debate_result", None), DebateResult):
         dr = result.debate_result
-
-        console.print(Panel(
+        debate_body = (
             f"[bold]Judge:[/bold] {dr.judge_model}\n"
-            f"[bold]Debaters:[/bold] {', '.join(dr.proposals.keys())}",
+            f"[bold]Debaters:[/bold] {', '.join(dr.proposals.keys())}"
+        )
+        if dr.judgment:
+            preview = dr.judgment[:200].rstrip()
+            debate_body += f"\n\n[dim]{preview}[/dim]"
+        console.print()
+        console.print(Panel(
+            debate_body,
             title="[bold]Structured Debate[/bold]",
             border_style="blue",
         ))
 
-        # Judgment preview
-        if dr.judgment:
-            preview = dr.judgment[:500]
-            if len(dr.judgment) > 500:
-                preview += "..."
-            console.print(Panel(
-                preview,
-                title="[bold]Judgment[/bold]",
-                border_style="green",
-            ))
-            console.print()
+    # ── Completion box ───────────────────────────────────────
 
-    # Routing decisions
-    if result.routing_decisions:
-        table = Table(title="Routing Decisions")
-        table.add_column("Stage", style="cyan")
-        table.add_column("Model", style="bold")
-        table.add_column("Strategy", style="dim")
-        table.add_column("Fitness", justify="right")
-        table.add_column("Est. Cost", justify="right")
+    duration = _format_duration(result.duration_seconds)
+    total_tokens = result.total_tokens
+    if total_tokens >= 1000:
+        tok_str = f"{total_tokens:,}"
+    else:
+        tok_str = str(total_tokens)
 
-        for d in result.routing_decisions:
-            table.add_row(
-                d.role.value,
-                d.model_key,
-                d.strategy.value,
-                f"{d.fitness_score:.2f}",
-                f"${d.estimated_cost:.4f}",
-            )
-        console.print(table)
-        console.print()
+    # Count unique models
+    model_set = set()
+    for d in result.routing_decisions:
+        model_set.add(d.model_key)
+    model_count = len(model_set) or len(result.stages)
 
-    # Summary metrics
-    summary = Table.grid(padding=(0, 2))
-    summary.add_row(
-        "[bold]Total Cost:[/bold]", f"${result.total_cost:.4f}",
-        "[bold]Total Tokens:[/bold]", f"{result.total_tokens:,}",
+    # Build verdicts line
+    verdicts_parts: list[str] = []
+    for review in result.arbiter_reviews:
+        stage_val = review.stage_reviewed.value
+        verdict_val = review.verdict.value
+        v_color = _VERDICT_COLORS.get(verdict_val, "white")
+        verdicts_parts.append(
+            f"{stage_val}=[{v_color}]{verdict_val.upper()}[/{v_color}]"
+        )
+    verdicts_str = "  ".join(verdicts_parts)
+
+    # Status line
+    if result.halted:
+        status_line = "[bold bright_red]✗ PIPELINE HALTED[/bold bright_red]"
+        if result.halt_reason:
+            status_line += f"\n\n[dim]{result.halt_reason[:200]}[/dim]"
+        border_style = "bright_red"
+    elif result.success:
+        status_line = "[bold green]✓ PIPELINE COMPLETED SUCCESSFULLY[/bold green]"
+        border_style = "green"
+    else:
+        status_line = "[bold red]✗ PIPELINE FAILED[/bold red]"
+        border_style = "red"
+
+    completion_markup = (
+        f"{status_line}\n\n"
+        f"[dim]Duration:[/dim] [bold]{duration}[/bold]   "
+        f"[dim]Cost:[/dim] [bold]${result.total_cost:.2f}[/bold]   "
+        f"[dim]Tokens:[/dim] [bold]{tok_str}[/bold]\n"
+        f"[dim]Stages:[/dim] [bold]{len(result.stages)}[/bold]        "
+        f"[dim]Models:[/dim] [bold]{model_count} providers[/bold]\n"
     )
-    summary.add_row(
-        "[bold]Duration:[/bold]", f"{result.duration_seconds:.1f}s",
-        "[bold]Session:[/bold]", result.session_id or "n/a",
-    )
-    console.print(Panel(summary, title="[bold]Summary[/bold]"))
+
+    if verdicts_str:
+        completion_markup += f"\n[dim]Verdicts:[/dim] {verdicts_str}\n"
+
+    if output_path:
+        completion_markup += f"\n[dim]Output:[/dim] {output_path}/"
+
+    if show_menu:
+        completion_markup += (
+            "\n\n[green]\\[s][/green] [dim]Summary[/dim]  "
+            "[green]\\[c][/green] [dim]Code[/dim]  "
+            "[green]\\[r][/green] [dim]Reviews[/dim]  "
+            "[green]\\[d][/green] [dim]Diffs[/dim]  "
+            "[green]\\[Enter][/green] [dim]Exit[/dim]"
+        )
+
+    import rich.box
+    console.print()
+    console.print(Panel(
+        completion_markup,
+        border_style=border_style,
+        box=rich.box.ROUNDED,
+        padding=(1, 2),
+    ))
+
+
+def _display_result(result) -> None:
+    """Display pipeline result (compat alias for review command)."""
+    _display_completion(result, show_menu=False)
 
 
 def _display_apply_result(result) -> None:
@@ -863,6 +952,89 @@ def _display_apply_result(result) -> None:
         console.print("  [red]Tests: FAILED[/red]")
         if result.rolled_back:
             console.print("  [yellow]Changes rolled back[/yellow]")
+
+
+# ── triad show ───────────────────────────────────────────────────
+
+
+@app.command()
+def show(
+    session_id: str = typer.Argument("latest", help="Session ID prefix or 'latest'"),
+    view: str = typer.Argument("", help="View: summary, code, reviews, diffs (empty for menu)"),
+) -> None:
+    """View outputs from a previous pipeline run."""
+    output_base = Path("triad-output")
+
+    if session_id == "latest":
+        session_dir = _find_latest_session(output_base)
+    else:
+        session_dir = _find_session_by_prefix(output_base, session_id)
+
+    if not session_dir:
+        console.print(f"[red]Session not found: {session_id}[/red]")
+        if output_base.exists():
+            sessions = sorted(
+                (d for d in output_base.iterdir() if d.is_dir()),
+                key=lambda d: d.stat().st_mtime,
+                reverse=True,
+            )
+            if sessions:
+                console.print("[dim]Available sessions:[/dim]")
+                for s in sessions[:10]:
+                    console.print(f"  [dim]{s.name}[/dim]")
+        raise typer.Exit(1)
+
+    # Load result from session.json
+    result = _load_session_result(session_dir)
+
+    from triad.post_run_viewer import PostRunViewer
+
+    viewer = PostRunViewer(console, session_dir, result)
+
+    if not view:
+        # Show completion panel then interactive menu
+        if result:
+            _display_completion(result, str(session_dir))
+        viewer.run()
+    else:
+        viewer.run_direct(view)
+
+
+def _find_latest_session(base: Path) -> Path | None:
+    """Find the most recent session directory by mtime."""
+    if not base.exists():
+        return None
+    sessions = [
+        d for d in base.iterdir()
+        if d.is_dir() and (d / "session.json").exists()
+    ]
+    if not sessions:
+        return None
+    return max(sessions, key=lambda d: d.stat().st_mtime)
+
+
+def _find_session_by_prefix(base: Path, prefix: str) -> Path | None:
+    """Find a session directory by ID prefix match."""
+    if not base.exists():
+        return None
+    for d in sorted(base.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+        if d.is_dir() and d.name.startswith(prefix):
+            return d
+    return None
+
+
+def _load_session_result(session_dir: Path) -> object | None:
+    """Load a PipelineResult from session.json."""
+    session_json = session_dir / "session.json"
+    if not session_json.exists():
+        return None
+    try:
+        import json
+        from triad.schemas.pipeline import PipelineResult
+        data = json.loads(session_json.read_text(encoding="utf-8"))
+        return PipelineResult.model_validate(data)
+    except Exception:
+        return None
 
 
 # ── triad plan ───────────────────────────────────────────────────

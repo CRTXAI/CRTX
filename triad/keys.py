@@ -70,6 +70,9 @@ PROVIDER_NAMES: dict[str, str] = {
     "XAI_API_KEY": "xAI",
 }
 
+# Triad Pro API key (not a model provider — used for dashboard event forwarding)
+PRO_KEY_ENV = "TRIAD_PRO_KEY"
+
 
 def load_keys_env() -> None:
     """Load API keys from ~/.triad/keys.env and .env into os.environ.

@@ -35,7 +35,7 @@ _STATE_COMMANDS = {"mode", "route", "arbiter"}
 # All recognized first-words — anything matching these is NOT a task
 _KNOWN_COMMANDS = (
     _CLI_COMMANDS | _STATE_COMMANDS
-    | {"help", "status", "exit", "quit", "run"}
+    | {"help", "status", "exit", "quit", "run", "show"}
 )
 
 # Valid values for session state
@@ -56,6 +56,9 @@ class TriadREPL:
         self.mode = "sequential"
         self.route = "hybrid"
         self.arbiter = "bookend"
+        # Last run state for the `show` command
+        self._last_session_dir: str | None = None
+        self._last_result: object | None = None
         # Cached provider health — populated once at startup
         # Maps env_var -> ("ok" | "degraded" | "error" | "none", detail)
         self._provider_health: dict[str, tuple[str, str]] = {}
@@ -264,6 +267,10 @@ class TriadREPL:
                 )
             return
 
+        if command == "show":
+            self._handle_show(args)
+            return
+
         if command in _CLI_COMMANDS:
             self._invoke_cli(user_input)
             return
@@ -281,6 +288,8 @@ class TriadREPL:
         help_text.append("  Expand a rough idea into a task spec\n")
         help_text.append("    estimate <desc>   ", style=BRAND["green"])
         help_text.append("  Show cost estimates\n")
+        help_text.append("    show [view]       ", style=BRAND["green"])
+        help_text.append("  View last run (summary/code/reviews/diffs)\n")
 
         help_text.append("\n  Session Settings\n", style="bold")
         help_text.append("    mode <value>      ", style=BRAND["green"])
@@ -434,6 +443,13 @@ class TriadREPL:
             emitter = PipelineEventEmitter()
             stream_callback = None
 
+            # Attach ProAgent for dashboard event forwarding (if configured)
+            from triad.pro.agent import ProAgent
+
+            _pro_agent = ProAgent.from_config()
+            if _pro_agent:
+                emitter.add_listener(_pro_agent.create_listener())
+
             # Try streaming display for sequential mode
             use_streaming = (
                 pipeline_mode == PipelineMode.SEQUENTIAL
@@ -466,17 +482,67 @@ class TriadREPL:
                         run_pipeline(task_spec, config, registry, emitter),
                     )
 
-            # Display results inline
-            from triad.cli import _display_result
-
-            console.print()
-            _display_result(pipeline_result)
-
             from triad.output.writer import write_pipeline_output
 
             output_dir = "triad-output"
             actual_path = write_pipeline_output(pipeline_result, output_dir)
-            console.print(f"\n[dim]Output written to:[/dim] {actual_path}/")
+
+            # Store for the `show` command
+            self._last_session_dir = actual_path
+            self._last_result = pipeline_result
+
+            # Display completion panel + interactive viewer
+            from triad.cli import _display_completion
+
+            _display_completion(pipeline_result, actual_path)
+
+            from pathlib import Path
+
+            from triad.post_run_viewer import PostRunViewer
+
+            viewer = PostRunViewer(console, Path(actual_path), pipeline_result)
+            viewer.run()
 
         except Exception as e:
             console.print(f"  [{BRAND['red']}]Error:[/{BRAND['red']}] {e}")
+
+    def _handle_show(self, args: str) -> None:
+        """Handle the 'show' command for viewing run outputs."""
+        from pathlib import Path
+
+        from triad.post_run_viewer import PostRunViewer
+
+        parts = args.strip().split()
+        subcommand = parts[0] if parts else ""
+
+        if not self._last_session_dir or not self._last_result:
+            console.print(
+                f"  [{BRAND['dim']}]No previous run. "
+                f"Use 'run' first or use 'triad show' from the CLI.[/{BRAND['dim']}]"
+            )
+            return
+
+        viewer = PostRunViewer(
+            console, Path(self._last_session_dir), self._last_result,
+        )
+
+        if not subcommand:
+            viewer.run()
+        elif subcommand == "summary":
+            viewer._show_summary()
+        elif subcommand == "code":
+            if len(parts) > 1:
+                try:
+                    viewer._show_code_by_index(int(parts[1]))
+                except ValueError:
+                    viewer._show_code()
+            else:
+                viewer._show_code()
+        elif subcommand == "reviews":
+            viewer._show_reviews()
+        elif subcommand == "diffs":
+            viewer._show_diffs()
+        else:
+            console.print(
+                f"  [{BRAND['dim']}]Usage: show [summary|code|reviews|diffs][/{BRAND['dim']}]"
+            )

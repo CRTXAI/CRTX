@@ -1,4 +1,4 @@
-"""Tests for the scrolling pipeline display."""
+"""Tests for the compact streaming pipeline display."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from triad.cli_streaming_display import (
     ScrollingPipelineDisplay,
     StageState,
     StreamBuffer,
+    _format_tokens,
     _looks_like_diff,
     _render_diff_text,
 )
@@ -118,6 +119,20 @@ class TestDiffDetection:
         assert "--- a/file.py" in text.plain
 
 
+class TestFormatTokens:
+    def test_small_count(self):
+        assert _format_tokens(50) == "50"
+
+    def test_large_count(self):
+        assert _format_tokens(4200) == "4.2K"
+
+    def test_zero(self):
+        assert _format_tokens(0) == "0"
+
+    def test_exactly_1000(self):
+        assert _format_tokens(1000) == "1.0K"
+
+
 class TestScrollingPipelineDisplay:
     def test_create_listener(self):
         console = Console(quiet=True)
@@ -160,13 +175,11 @@ class TestScrollingPipelineDisplay:
         console = Console(quiet=True)
         display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
         listener = display.create_listener()
-        # First start the stage
         listener(PipelineEvent(
             type=EventType.STAGE_STARTED,
             data={"stage": "implement", "model": "ModelA"},
         ))
         assert display._stage_states["implement"] == StageState.ACTIVE
-        # Now trigger fallback
         listener(PipelineEvent(
             type=EventType.MODEL_FALLBACK,
             data={"stage": "implement", "original_model": "ModelA",
@@ -180,12 +193,10 @@ class TestScrollingPipelineDisplay:
         console = Console(quiet=True)
         display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
         listener = display.create_listener()
-        # Start stage first
         listener(PipelineEvent(
             type=EventType.STAGE_STARTED,
             data={"stage": "verify", "model": "TestModel"},
         ))
-        # Error with stage specified
         listener(PipelineEvent(
             type=EventType.ERROR,
             data={"stage": "verify", "error": "timeout"},
@@ -223,75 +234,41 @@ class TestScrollingPipelineDisplay:
         assert display.cancel_event.is_set()
 
 
-class TestLineBuffer:
-    """Tests for the line buffer and line processing."""
+class TestTokenCounter:
+    """Tests for the stream callback token counter."""
 
-    def test_flush_complete_lines(self):
+    def test_token_count_increments(self):
         console = Console(quiet=True)
         display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
-        display._line_buffer = "line one\nline two\npartial"
-        display._flush_complete_lines()
-        # "partial" should remain in the buffer
-        assert display._line_buffer == "partial"
+        display._stage_models["architect"] = "test-model"
+        callback = display.create_stream_callback()
 
-    def test_flush_line_buffer_prints_remainder(self):
-        console = Console(quiet=True)
-        display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
-        display._line_buffer = "trailing text"
-        display._flush_line_buffer()
-        assert display._line_buffer == ""
+        chunk1 = StreamChunk(delta="hello ", accumulated="hello ", token_count=5)
+        asyncio.run(callback(PipelineStage.ARCHITECT, chunk1))
+        assert display._total_tokens == 5
+        assert display._stage_tokens["architect"] == 5
 
-    def test_empty_line_buffer_noop(self):
-        console = Console(quiet=True)
-        display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
-        display._line_buffer = ""
-        display._flush_line_buffer()
-        assert display._line_buffer == ""
+        chunk2 = StreamChunk(delta="world", accumulated="hello world", token_count=10)
+        asyncio.run(callback(PipelineStage.ARCHITECT, chunk2))
+        assert display._total_tokens == 10
+        assert display._stage_tokens["architect"] == 10
 
-    def test_process_line_file_header(self):
-        console = Console(quiet=True)
-        display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
-        display._process_line("# file: src/app.py")
-        assert display._current_file == "src/app.py"
-        assert display._current_language == "py"
-
-    def test_process_line_fence_open_close(self):
-        console = Console(quiet=True)
-        display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
-        assert display._in_code_fence is False
-        display._process_line("```python")
-        assert display._in_code_fence is True
-        display._process_line("```")
-        assert display._in_code_fence is False
-
-    def test_process_line_diff_coloring_in_refactor(self):
-        """Diff lines during refactor stage should be color-processed."""
-        console = Console(quiet=True)
-        display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
-        display._current_stage = "refactor"
-        display._in_code_fence = True
-        # These should not raise — we're just verifying they go through
-        # the diff coloring path without error
-        display._process_line("+added line")
-        display._process_line("-removed line")
-        display._process_line("@@ -1,3 +1,5 @@")
-        display._process_line("context line")
-
-    def test_stream_callback_splits_lines(self):
-        """Stream callback should process complete lines from chunks."""
+    def test_stream_callback_no_content_display(self):
+        """Stream callback should not store any line buffer or code state."""
         console = Console(quiet=True)
         display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
         callback = display.create_stream_callback()
 
-        # Send a chunk with a complete line and a partial
-        chunk = StreamChunk(delta="hello\nwor", accumulated="hello\nwor", token_count=2)
+        chunk = StreamChunk(
+            delta="```python\nprint('hello')\n```\n",
+            accumulated="```python\nprint('hello')\n```\n",
+            token_count=10,
+        )
         asyncio.run(callback(PipelineStage.ARCHITECT, chunk))
-        assert display._line_buffer == "wor"
 
-        # Complete the second line
-        chunk2 = StreamChunk(delta="ld\n", accumulated="hello\nworld\n", token_count=3)
-        asyncio.run(callback(PipelineStage.ARCHITECT, chunk2))
-        assert display._line_buffer == ""
+        # No line buffer fields should exist
+        assert not hasattr(display, "_line_buffer")
+        assert not hasattr(display, "_in_code_fence")
 
 
 class TestStatusBar:
@@ -335,14 +312,7 @@ class TestStatusBar:
         bar = display._build_status_bar()
         assert "4.2K tok" in bar.plain
 
-    def test_status_bar_small_tokens(self):
-        console = Console(quiet=True)
-        display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
-        display._total_tokens = 50
-        bar = display._build_status_bar()
-        assert "50 tok" in bar.plain
-
-    def test_rich_dunder_delegates_to_status_bar(self):
+    def test_rich_dunder_delegates(self):
         console = Console(quiet=True)
         display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
         result = display.__rich__()
@@ -350,11 +320,60 @@ class TestStatusBar:
         assert "Architect" in result.plain
 
 
+class TestProgressLine:
+    """Tests for the live progress line with stage hint + tokens."""
+
+    def test_progress_line_shown_when_active(self):
+        console = Console(quiet=True)
+        display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
+        display._current_stage = "architect"
+        display._stage_states["architect"] = StageState.ACTIVE
+        display._stage_tokens["architect"] = 2100
+
+        renderable = display._build_live_renderable()
+        plain = renderable.plain
+        assert "Designing architecture..." in plain
+        assert "2.1K tokens" in plain
+
+    def test_no_progress_line_when_idle(self):
+        console = Console(quiet=True)
+        display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
+        display._current_stage = ""
+
+        renderable = display._build_live_renderable()
+        plain = renderable.plain
+        # Should NOT contain any stage hint
+        assert "Designing architecture" not in plain
+        assert "Generating implementation" not in plain
+
+    def test_stage_completed_clears_progress(self):
+        console = Console(quiet=True)
+        display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
+        listener = display.create_listener()
+
+        # Start stage
+        listener(PipelineEvent(
+            type=EventType.STAGE_STARTED,
+            data={"stage": "architect", "model": "o3"},
+        ))
+        assert display._current_stage == "architect"
+
+        # Complete stage
+        listener(PipelineEvent(
+            type=EventType.STAGE_COMPLETED,
+            data={"stage": "architect", "cost": 0.1, "duration": 5.0},
+        ))
+        assert display._current_stage == ""
+
+        # Progress line should be gone
+        renderable = display._build_live_renderable()
+        assert "Designing architecture" not in renderable.plain
+
+
 class TestInlinePrinting:
     """Tests for inline event printing."""
 
-    def test_stage_started_prints_header(self):
-        """Stage start should update state and set current_stage."""
+    def test_stage_started_updates_state(self):
         console = Console(quiet=True)
         display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
         listener = display.create_listener()
@@ -380,8 +399,7 @@ class TestInlinePrinting:
         assert display._active_model is None
         assert display._active_model_stage is None
 
-    def test_arbiter_verdict_prints(self):
-        """Arbiter events should not raise."""
+    def test_arbiter_verdict_no_error(self):
         console = Console(quiet=True)
         display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
         listener = display.create_listener()
@@ -390,7 +408,7 @@ class TestInlinePrinting:
             data={"stage": "architect", "verdict": "approve", "confidence": 0.91},
         ))
 
-    def test_retry_prints(self):
+    def test_retry_no_error(self):
         console = Console(quiet=True)
         display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
         listener = display.create_listener()
@@ -399,38 +417,13 @@ class TestInlinePrinting:
             data={"stage": "implement", "retry_number": 2},
         ))
 
-    def test_pipeline_halted_prints(self):
+    def test_pipeline_halted_clears_stage(self):
         console = Console(quiet=True)
         display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
+        display._current_stage = "verify"
         listener = display.create_listener()
         listener(PipelineEvent(
             type=EventType.PIPELINE_HALTED,
             data={"stage": "verify"},
         ))
-
-    def test_stage_started_resets_line_buffer(self):
-        """Starting a new stage should flush and reset the line buffer."""
-        console = Console(quiet=True)
-        display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
-        display._line_buffer = "leftover text"
-        display._in_code_fence = True
-        listener = display.create_listener()
-        listener(PipelineEvent(
-            type=EventType.STAGE_STARTED,
-            data={"stage": "implement", "model": "claude"},
-        ))
-        assert display._line_buffer == ""
-        assert display._in_code_fence is False
-
-    def test_stage_completed_resets_line_buffer(self):
-        console = Console(quiet=True)
-        display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
-        display._line_buffer = "leftover"
-        display._in_code_fence = True
-        listener = display.create_listener()
-        listener(PipelineEvent(
-            type=EventType.STAGE_COMPLETED,
-            data={"stage": "architect", "cost": 0.05, "duration": 8.0},
-        ))
-        assert display._line_buffer == ""
-        assert display._in_code_fence is False
+        assert display._current_stage == ""
