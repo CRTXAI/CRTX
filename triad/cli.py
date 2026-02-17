@@ -505,13 +505,10 @@ def run(
     if interactive:
         display = PipelineDisplay(console, mode, route, arbiter)
         emitter.add_listener(display.create_listener())
-        display.start()
-        try:
+        with display:
             pipeline_result = asyncio.run(
                 run_pipeline(task_spec, config, registry, emitter),
             )
-        finally:
-            display.stop()
     else:
         # Non-interactive: show static task panel + spinner
         _display_task_panel(task_spec, config)
@@ -858,14 +855,29 @@ def _run_from_plan(result, registry, mode_str: str, route_str: str) -> None:
 
     task_spec = result.task_spec
 
-    console.print()
-    _display_task_panel(task_spec, config)
-
+    from triad.cli_display import PipelineDisplay, is_interactive
+    from triad.dashboard.events import PipelineEventEmitter
     from triad.orchestrator import run_pipeline
 
-    console.print()
-    with console.status("[bold blue]Running pipeline...", spinner="dots"):
-        pipeline_result = asyncio.run(run_pipeline(task_spec, config, registry))
+    emitter = PipelineEventEmitter()
+
+    if is_interactive():
+        display = PipelineDisplay(
+            console, mode_str, route_str, base_config.arbiter_mode.value,
+        )
+        emitter.add_listener(display.create_listener())
+        with display:
+            pipeline_result = asyncio.run(
+                run_pipeline(task_spec, config, registry, emitter),
+            )
+    else:
+        console.print()
+        _display_task_panel(task_spec, config)
+        console.print()
+        with console.status("[bold blue]Running pipeline...", spinner="dots"):
+            pipeline_result = asyncio.run(
+                run_pipeline(task_spec, config, registry, emitter),
+            )
 
     console.print()
     _display_result(pipeline_result)

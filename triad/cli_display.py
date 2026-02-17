@@ -498,6 +498,19 @@ class PipelineDisplay:
 
         return listener
 
+    def __rich__(self) -> Table:
+        """Rich renderable protocol — called by Live on each refresh cycle."""
+        return self._build_display()
+
+    def __enter__(self):
+        """Context manager support: start the Live display."""
+        self.start()
+        return self
+
+    def __exit__(self, *_exc):
+        """Context manager support: stop the Live display."""
+        self.stop()
+
     def _add_log(self, style: str, message: str) -> None:
         """Add an entry to the activity log."""
         elapsed = time.monotonic() - self._pipeline_start
@@ -622,7 +635,7 @@ class PipelineDisplay:
         """Start the Rich Live display. Returns the Live context manager."""
         self._pipeline_start = time.monotonic()
         self._live = Live(
-            self._build_display(),
+            self,
             console=self._console,
             refresh_per_second=4,
             transient=True,

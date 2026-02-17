@@ -7,6 +7,7 @@ session state management, and task execution. Launch with `triad`
 
 from __future__ import annotations
 
+import asyncio
 import shlex
 
 from rich.console import Console
@@ -217,21 +218,68 @@ class TriadREPL:
             console.print(f"  [{BRAND['red']}]Error:[/{BRAND['red']}] {e}")
 
     def _run_task(self, task: str) -> None:
-        """Run a pipeline task with current session settings."""
+        """Run a pipeline task with current session settings.
+
+        Executes the pipeline directly (not via CliRunner) so that
+        the PipelineDisplay Live rendering works in the real terminal.
+        """
         try:
-            from typer.testing import CliRunner
+            from triad.cli_display import PipelineDisplay
+            from triad.dashboard.events import PipelineEventEmitter
+            from triad.orchestrator import run_pipeline
+            from triad.providers.registry import load_models, load_pipeline_config
+            from triad.schemas.pipeline import (
+                ArbiterMode,
+                PipelineConfig,
+                PipelineMode,
+                TaskSpec,
+            )
+            from triad.schemas.routing import RoutingStrategy
 
-            from triad.cli import app
+            registry = load_models()
+            base_config = load_pipeline_config()
 
-            args = [
-                "run", task,
-                "--mode", self.mode,
-                "--route", self.route,
-                "--arbiter", self.arbiter,
-            ]
-            cli_runner = CliRunner()
-            result = cli_runner.invoke(app, args)
-            if result.output:
-                console.print(result.output, end="")
+            pipeline_mode = PipelineMode(self.mode)
+            routing_strategy = RoutingStrategy(self.route)
+            arbiter_mode = ArbiterMode(self.arbiter)
+
+            config = PipelineConfig(
+                pipeline_mode=pipeline_mode,
+                arbiter_mode=arbiter_mode,
+                default_timeout=base_config.default_timeout,
+                max_retries=base_config.max_retries,
+                reconciliation_retries=base_config.reconciliation_retries,
+                stages=base_config.stages,
+                arbiter_model=base_config.arbiter_model,
+                reconcile_model=base_config.reconcile_model,
+                routing_strategy=routing_strategy,
+                min_fitness=base_config.min_fitness,
+                persist_sessions=base_config.persist_sessions,
+                session_db_path=base_config.session_db_path,
+            )
+
+            task_spec = TaskSpec(task=task)
+
+            emitter = PipelineEventEmitter()
+            display = PipelineDisplay(console, self.mode, self.route, self.arbiter)
+            emitter.add_listener(display.create_listener())
+
+            with display:
+                pipeline_result = asyncio.run(
+                    run_pipeline(task_spec, config, registry, emitter),
+                )
+
+            # Display results inline
+            from triad.cli import _display_result
+
+            console.print()
+            _display_result(pipeline_result)
+
+            from triad.output.writer import write_pipeline_output
+
+            output_dir = "triad-output"
+            write_pipeline_output(pipeline_result, output_dir)
+            console.print(f"\n[dim]Output written to:[/dim] {output_dir}/")
+
         except Exception as e:
             console.print(f"  [{BRAND['red']}]Error:[/{BRAND['red']}] {e}")
