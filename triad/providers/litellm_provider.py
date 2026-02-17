@@ -16,6 +16,9 @@ import re
 import litellm
 from pydantic import BaseModel, ValidationError
 
+# Suppress LiteLLM's "Give Feedback / Get Help" and "Provider List" banners
+litellm.suppress_debug_info = True
+
 from triad.providers.base import ModelProvider
 from triad.schemas.messages import (
     AgentMessage,

@@ -247,21 +247,21 @@ class TestHybrid:
         assert key == "premium"
         assert "[hybrid/quality]" in rationale
 
-    def test_uses_cost_for_architect(self):
+    def test_uses_best_for_architect(self):
         registry = _make_diverse_registry()
         key, rationale = hybrid(
             registry, PipelineStage.ARCHITECT, min_fitness=0.70,
         )
-        assert key == "budget"  # cost_optimized for early stage
-        assert "[hybrid/cost]" in rationale
+        assert key == "premium"  # best above threshold for early stage
+        assert "[hybrid/balanced]" in rationale
 
-    def test_uses_cost_for_implement(self):
+    def test_uses_best_for_implement(self):
         registry = _make_diverse_registry()
         key, rationale = hybrid(
             registry, PipelineStage.IMPLEMENT, min_fitness=0.70,
         )
-        assert key == "budget"  # cost_optimized for early stage
-        assert "[hybrid/cost]" in rationale
+        assert key == "premium"  # best above threshold for early stage
+        assert "[hybrid/balanced]" in rationale
 
 
 # ── RoutingEngine ────────────────────────────────────────────────
@@ -346,7 +346,7 @@ class TestRoutingEngine:
         }
 
     def test_hybrid_mixed_selection(self):
-        """Hybrid should pick different models for different stages."""
+        """Hybrid should pick best model for all stages above threshold."""
         registry = _make_diverse_registry()
         config = PipelineConfig(
             arbiter_mode="off",
@@ -357,10 +357,9 @@ class TestRoutingEngine:
         decisions = engine.select_pipeline_models()
 
         decision_map = {d.role: d for d in decisions}
-        # Early stages: cost_optimized -> budget
-        assert decision_map[PipelineStage.ARCHITECT].model_key == "budget"
-        assert decision_map[PipelineStage.IMPLEMENT].model_key == "budget"
-        # Critical stages: quality_first -> premium
+        # All stages: best model (premium has highest fitness everywhere)
+        assert decision_map[PipelineStage.ARCHITECT].model_key == "premium"
+        assert decision_map[PipelineStage.IMPLEMENT].model_key == "premium"
         assert decision_map[PipelineStage.REFACTOR].model_key == "premium"
         assert decision_map[PipelineStage.VERIFY].model_key == "premium"
 
@@ -520,8 +519,8 @@ class TestOrchestratorRouting:
             assert isinstance(decision, RoutingDecision)
             assert decision.model_key == "premium"
 
-    async def test_hybrid_uses_different_models(self):
-        """Hybrid routing should use budget for early, premium for late."""
+    async def test_hybrid_uses_best_models(self):
+        """Hybrid routing should use best model above threshold for all stages."""
         from triad.orchestrator import PipelineOrchestrator
 
         registry = _make_diverse_registry()
@@ -547,8 +546,8 @@ class TestOrchestratorRouting:
             result = await orch.run()
 
         decision_map = {d.role: d for d in result.routing_decisions}
-        assert decision_map[PipelineStage.ARCHITECT].model_key == "budget"
-        assert decision_map[PipelineStage.IMPLEMENT].model_key == "budget"
+        assert decision_map[PipelineStage.ARCHITECT].model_key == "premium"
+        assert decision_map[PipelineStage.IMPLEMENT].model_key == "premium"
         assert decision_map[PipelineStage.REFACTOR].model_key == "premium"
         assert decision_map[PipelineStage.VERIFY].model_key == "premium"
 

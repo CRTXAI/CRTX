@@ -435,35 +435,53 @@ class PipelineDisplay:
                     if stage in self._stages:
                         self._stages[stage]["status"] = "done"
                         self._stages[stage]["duration"] = duration
-                        self._stages[stage]["cost"] = cost
+                        # Accumulate cost across retries
+                        prev = self._stages[stage]["cost"] or 0
+                        self._stages[stage]["cost"] = prev + cost
                         self._stages[stage]["confidence"] = confidence
                         if model:
                             self._stages[stage]["model"] = model
+                    total_cost = (self._stages.get(stage, {}).get("cost") or 0)
                     self._add_log(
                         BRAND["mint"],
-                        f"● {stage.title()} done ({duration:.1f}s, ${cost:.4f})",
+                        f"● {stage.title()} done ({duration:.1f}s, ${total_cost:.4f})",
                     )
 
                 elif etype == "arbiter_started":
                     stage = event.data.get("stage", "")
+                    arbiter_model = event.data.get("arbiter_model", "")
                     self._arbiter_active = stage
-                    self._add_log(BRAND["gold"], f"⚖ Arbiter reviewing {stage}")
+                    model_note = f" ({arbiter_model})" if arbiter_model else ""
+                    self._add_log(
+                        BRAND["gold"],
+                        f"⚖ Arbiter reviewing {stage}{model_note}",
+                    )
 
                 elif etype == "arbiter_verdict":
                     stage = event.data.get("stage", "")
                     verdict = event.data.get("verdict", "")
                     confidence = event.data.get("confidence", 0)
+                    reasoning = event.data.get("reasoning_preview", "")
+                    arbiter_model = event.data.get("arbiter_model", "")
                     self._arbiter_active = None
                     self._arbiter_verdicts.append({
                         "stage": stage,
                         "verdict": verdict,
                         "confidence": confidence,
+                        "arbiter_model": arbiter_model,
                     })
                     style = _verdict_color(verdict)
+                    # Main verdict line
                     self._add_log(
                         style,
                         f"⚖ {stage}: {verdict.upper()} (conf={confidence:.2f})",
                     )
+                    # One-line reasoning summary for non-APPROVE verdicts
+                    if reasoning and verdict.lower() != "approve":
+                        # Extract first meaningful sentence
+                        summary = reasoning.split("\n")[0].strip()[:80]
+                        if summary:
+                            self._add_log(BRAND["dim"], f"  └ {summary}")
 
                 elif etype == "retry_triggered":
                     stage = event.data.get("stage", "")

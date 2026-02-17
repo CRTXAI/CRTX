@@ -139,6 +139,18 @@ class PipelineOrchestrator:
         if self._emitter is not None:
             await self._emitter.emit(event_type, **data)
 
+    def _display_name(self, model_key: str) -> str:
+        """Resolve a registry key to its display_name for UI events."""
+        cfg = self._registry.get(model_key)
+        return cfg.display_name if cfg else model_key
+
+    def _display_name_from_litellm_id(self, litellm_id: str) -> str:
+        """Resolve a LiteLLM model ID to a display_name."""
+        for cfg in self._registry.values():
+            if cfg.model == litellm_id:
+                return cfg.display_name
+        return litellm_id
+
     @property
     def session(self) -> list[AgentMessage]:
         """The session audit trail — all AgentMessages from the run."""
@@ -182,10 +194,6 @@ class PipelineOrchestrator:
             logger.info("Starting stage: %s", stage.value)
 
             stage_start = time.monotonic()
-            model_key = self._stage_models.get(stage, "")
-            await self._emit(
-                "stage_started", stage=stage.value, model=model_key,
-            )
 
             template_vars = self._build_template_vars(
                 stage=stage,
@@ -195,6 +203,7 @@ class PipelineOrchestrator:
                 flagged_issues=flagged_issues,
             )
 
+            # _run_stage selects the model and emits stage_started
             msg = await self._run_stage(stage, template_vars)
 
             stages[stage] = msg
@@ -210,7 +219,7 @@ class PipelineOrchestrator:
             await self._emit(
                 "stage_completed",
                 stage=stage.value,
-                model=msg.model,
+                model=self._display_name(self._stage_models[stage]),
                 duration=stage_duration,
                 cost=stage_cost,
                 confidence=msg.confidence,
@@ -237,9 +246,9 @@ class PipelineOrchestrator:
                 await self._emit(
                     "arbiter_started",
                     stage=stage.value,
-                    arbiter_model=self._arbiter.get_arbiter_model(stage, msg.model)
-                    if hasattr(self._arbiter, "get_arbiter_model")
-                    else "arbiter",
+                    arbiter_model=self._display_name_from_litellm_id(
+                        msg.model,
+                    ),
                 )
                 review = await self._arbiter.review(
                     stage=stage,
@@ -256,6 +265,9 @@ class PipelineOrchestrator:
                     confidence=review.confidence,
                     issues_count=len(review.issues),
                     reasoning_preview=review.reasoning[:200],
+                    arbiter_model=self._display_name_from_litellm_id(
+                        review.arbiter_model,
+                    ),
                 )
 
                 if review.verdict == Verdict.HALT:
@@ -268,7 +280,9 @@ class PipelineOrchestrator:
                         "pipeline_halted",
                         stage=stage.value,
                         reason=halt_reason[:200],
-                        arbiter_model=review.arbiter_model,
+                        arbiter_model=self._display_name_from_litellm_id(
+                            review.arbiter_model,
+                        ),
                     )
                     break
 
@@ -301,6 +315,21 @@ class PipelineOrchestrator:
                     previous_output = msg.content
                     if stage == PipelineStage.ARCHITECT:
                         architect_output = msg.content
+
+                    # Emit final stage_completed with cumulative totals
+                    retry_msg_cost = msg.token_usage.cost if msg.token_usage else 0.0
+                    retry_arbiter_cost = sum(r.token_cost for r in retry_reviews)
+                    total_stage_cost = stage_cost + retry_msg_cost + retry_arbiter_cost
+                    total_stage_duration = time.monotonic() - stage_start
+                    await self._emit(
+                        "stage_completed",
+                        stage=stage.value,
+                        model=self._display_name(self._stage_models[stage]),
+                        duration=total_stage_duration,
+                        cost=total_stage_cost,
+                        confidence=msg.confidence,
+                        content_preview=msg.content[:200],
+                    )
 
                 if review.verdict == Verdict.FLAG:
                     flagged_issues = self._format_flags(review)
@@ -400,6 +429,7 @@ class PipelineOrchestrator:
                 retry_number=retry,
             )
 
+            # _run_stage emits stage_started with the selected model
             msg = await self._run_stage(stage, template_vars)
 
             # Re-review the retried output
@@ -407,6 +437,13 @@ class PipelineOrchestrator:
                 self._config.arbiter_mode, set()
             )
             if stage in reviewed_stages:
+                await self._emit(
+                    "arbiter_started",
+                    stage=stage.value,
+                    arbiter_model=self._display_name_from_litellm_id(
+                        msg.model,
+                    ),
+                )
                 retry_review = await self._arbiter.review(
                     stage=stage,
                     stage_model=msg.model,
@@ -415,6 +452,17 @@ class PipelineOrchestrator:
                     architect_output=architect_output,
                 )
                 retry_reviews.append(retry_review)
+                await self._emit(
+                    "arbiter_verdict",
+                    stage=stage.value,
+                    verdict=retry_review.verdict.value,
+                    confidence=retry_review.confidence,
+                    issues_count=len(retry_review.issues),
+                    reasoning_preview=retry_review.reasoning[:200],
+                    arbiter_model=self._display_name_from_litellm_id(
+                        retry_review.arbiter_model,
+                    ),
+                )
 
                 if retry_review.verdict in (Verdict.APPROVE, Verdict.FLAG):
                     return msg, retry_reviews
@@ -423,6 +471,12 @@ class PipelineOrchestrator:
                     return msg, retry_reviews
 
                 # Still REJECT — continue loop with new feedback
+                await self._emit(
+                    "retry_triggered",
+                    stage=stage.value,
+                    retry_number=retry + 1,
+                    reason=retry_review.reasoning[:200],
+                )
                 current_review = retry_review
             else:
                 # Not re-reviewed (shouldn't happen, but safe fallback)
@@ -444,12 +498,19 @@ class PipelineOrchestrator:
 
         Uses the RoutingEngine to select the model, renders the prompt
         template, calls the provider, and sets routing metadata on the
-        returned AgentMessage.
+        returned AgentMessage. Emits stage_started with the selected model.
         """
         decision = self._router.select_model(stage)
         self._routing_decisions.append(decision)
         self._stage_models[stage] = decision.model_key
         model_config = self._registry[decision.model_key]
+
+        await self._emit(
+            "stage_started",
+            stage=stage.value,
+            model=model_config.display_name,
+        )
+
         provider = LiteLLMProvider(model_config)
 
         # Render the system prompt from the stage's template

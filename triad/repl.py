@@ -20,10 +20,17 @@ console = Console()
 # Commands that are dispatched to CLI subcommands
 _CLI_COMMANDS = {
     "plan", "models", "estimate", "sessions", "config", "review", "dashboard",
+    "setup",
 }
 
 # Session state commands
 _STATE_COMMANDS = {"mode", "route", "arbiter"}
+
+# All recognized first-words — anything matching these is NOT a task
+_KNOWN_COMMANDS = (
+    _CLI_COMMANDS | _STATE_COMMANDS
+    | {"help", "status", "exit", "quit", "run"}
+)
 
 # Valid values for session state
 _VALID_MODES = {"sequential", "parallel", "debate"}
@@ -51,10 +58,9 @@ class TriadREPL:
         while True:
             try:
                 prompt_text = Text()
-                prompt_text.append("triad", style=BRAND["green"])
+                prompt_text.append("\ntriad", style=BRAND["green"])
                 prompt_text.append(" ▸ ", style=BRAND["mint"])
 
-                console.print()
                 user_input = console.input(prompt_text).strip()
 
                 if not user_input:
@@ -92,6 +98,16 @@ class TriadREPL:
 
         if command in _STATE_COMMANDS:
             self._set_state(command, args)
+            return
+
+        # "run <task>" is an explicit task invocation
+        if command == "run":
+            if args:
+                self._run_task(args)
+            else:
+                console.print(
+                    f"  [{BRAND['dim']}]Usage: run <task description>[/{BRAND['dim']}]"
+                )
             return
 
         if command in _CLI_COMMANDS:
@@ -246,7 +262,7 @@ class TriadREPL:
             config = PipelineConfig(
                 pipeline_mode=pipeline_mode,
                 arbiter_mode=arbiter_mode,
-                default_timeout=base_config.default_timeout,
+                default_timeout=300,
                 max_retries=base_config.max_retries,
                 reconciliation_retries=base_config.reconciliation_retries,
                 stages=base_config.stages,

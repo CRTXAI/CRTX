@@ -131,10 +131,11 @@ def hybrid(
     role: PipelineStage,
     min_fitness: float = 0.70,
 ) -> tuple[str, str]:
-    """Quality-first for critical stages, cost-optimized for others.
+    """Quality-first for critical stages, best-above-threshold for others.
 
-    Critical stages: refactor and verify (where quality matters most).
-    Earlier stages: architect and implement (where speed/cost matters).
+    Critical stages (refactor, verify): absolute best model regardless of cost.
+    Other stages (architect, implement): highest-fitness model above the
+    min_fitness threshold, with cost as tiebreaker.
 
     Returns:
         Tuple of (model_key, rationale).
@@ -142,11 +143,35 @@ def hybrid(
     Raises:
         RuntimeError: If the registry is empty.
     """
+    if not registry:
+        raise RuntimeError("No models available in registry")
+
     critical_stages = {PipelineStage.REFACTOR, PipelineStage.VERIFY}
 
     if role in critical_stages:
         key, rationale = quality_first(registry, role)
         return key, f"[hybrid/quality] {rationale}"
 
-    key, rationale = cost_optimized(registry, role, min_fitness)
-    return key, f"[hybrid/cost] {rationale}"
+    # Non-critical stages: best model above fitness threshold
+    eligible = {
+        k: v for k, v in registry.items()
+        if _fitness_for_role(v.fitness, role) >= min_fitness
+    }
+
+    if not eligible:
+        key, rationale = quality_first(registry, role)
+        return key, f"[hybrid/quality] {rationale} (none above threshold)"
+
+    # Highest fitness, with cheapest cost as tiebreaker
+    best_key = max(
+        eligible,
+        key=lambda k: (
+            _fitness_for_role(eligible[k].fitness, role),
+            -_avg_cost_per_token(eligible[k]),
+        ),
+    )
+    score = _fitness_for_role(registry[best_key].fitness, role)
+    return best_key, (
+        f"[hybrid/balanced] Best above {min_fitness:.2f} for "
+        f"{role.value} (fitness={score:.2f})"
+    )
