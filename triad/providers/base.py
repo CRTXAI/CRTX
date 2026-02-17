@@ -130,6 +130,30 @@ class ModelProvider(ABC):
             RuntimeError: If the model call fails after all retries.
         """
 
+    async def complete_streaming(
+        self,
+        messages: list[dict[str, str]],
+        system: str,
+        *,
+        timeout: int = 120,
+        on_chunk: object | None = None,
+    ) -> AgentMessage:
+        """Send a streaming completion request.
+
+        Default implementation falls back to non-streaming complete().
+        Providers that support streaming should override this method.
+
+        Args:
+            messages: Conversation messages in OpenAI format.
+            system: System prompt for this call.
+            timeout: Timeout in seconds.
+            on_chunk: Optional callback invoked with each StreamChunk.
+
+        Returns:
+            An AgentMessage with the full accumulated response.
+        """
+        return await self.complete(messages, system, timeout=timeout)
+
     def calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
         """Calculate the USD cost for a given token count.
 

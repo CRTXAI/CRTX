@@ -1387,6 +1387,7 @@ async def run_pipeline(
     config: PipelineConfig,
     registry: dict[str, ModelConfig],
     event_emitter: object | None = None,
+    stream_callback: Callable | None = None,
 ) -> PipelineResult:
     """Dispatch to the appropriate pipeline mode and return a result.
 
@@ -1401,6 +1402,7 @@ async def run_pipeline(
         config: Pipeline configuration.
         registry: Model registry.
         event_emitter: Optional dashboard event emitter for real-time updates.
+        stream_callback: Optional callback for streaming token delivery.
     """
     session_id = str(uuid.uuid4())
     started_at = datetime.now(UTC)
@@ -1420,6 +1422,7 @@ async def run_pipeline(
     else:
         result = await PipelineOrchestrator(
             task, config, registry, event_emitter,
+            stream_callback=stream_callback,
         ).run()
 
     result.session_id = session_id

@@ -36,6 +36,14 @@ class EventType(StrEnum):
     MODEL_FALLBACK = "model_fallback"
     ARBITER_SKIPPED = "arbiter_skipped"
     ERROR = "error"
+    # Streaming event types
+    TOKEN_DELTA = "token_delta"
+    FILE_STARTED = "file_started"
+    FILE_COMPLETED = "file_completed"
+    DIFF_CHUNK = "diff_chunk"
+    ARBITER_REASONING = "arbiter_reasoning"
+    COST_UPDATE = "cost_update"
+    PROGRESS_UPDATE = "progress_update"
 
 
 class PipelineEvent(BaseModel):

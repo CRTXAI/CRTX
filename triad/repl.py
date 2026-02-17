@@ -238,6 +238,7 @@ class TriadREPL:
 
         Executes the pipeline directly (not via CliRunner) so that
         the PipelineDisplay Live rendering works in the real terminal.
+        Uses streaming display when conditions are met.
         """
         try:
             from triad.cli_display import PipelineDisplay
@@ -277,13 +278,41 @@ class TriadREPL:
             task_spec = TaskSpec(task=task)
 
             emitter = PipelineEventEmitter()
-            display = PipelineDisplay(console, self.mode, self.route, self.arbiter)
-            emitter.add_listener(display.create_listener())
+            stream_callback = None
 
-            with display:
-                pipeline_result = asyncio.run(
-                    run_pipeline(task_spec, config, registry, emitter),
-                )
+            # Try streaming display for sequential mode
+            use_streaming = (
+                pipeline_mode == PipelineMode.SEQUENTIAL
+                and console.width >= 80
+                and console.height >= 24
+            )
+
+            if use_streaming:
+                try:
+                    from triad.cli_streaming_display import StreamingPipelineDisplay
+
+                    streaming_display = StreamingPipelineDisplay(
+                        console, self.mode, self.route, self.arbiter,
+                    )
+                    emitter.add_listener(streaming_display.create_listener())
+                    stream_callback = streaming_display.create_stream_callback()
+                    with streaming_display:
+                        pipeline_result = asyncio.run(
+                            run_pipeline(
+                                task_spec, config, registry, emitter,
+                                stream_callback=stream_callback,
+                            ),
+                        )
+                except ImportError:
+                    use_streaming = False
+
+            if not use_streaming:
+                display = PipelineDisplay(console, self.mode, self.route, self.arbiter)
+                emitter.add_listener(display.create_listener())
+                with display:
+                    pipeline_result = asyncio.run(
+                        run_pipeline(task_spec, config, registry, emitter),
+                    )
 
             # Display results inline
             from triad.cli import _display_result

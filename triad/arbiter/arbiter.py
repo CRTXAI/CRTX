@@ -47,10 +47,12 @@ class ArbiterEngine:
         config: PipelineConfig,
         registry: dict[str, ModelConfig],
         health: object | None = None,
+        stream_callback: object | None = None,
     ) -> None:
         self._config = config
         self._registry = registry
         self._health = health  # ProviderHealth instance (optional)
+        self._stream_callback = stream_callback
 
     async def review(
         self,
