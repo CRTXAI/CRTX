@@ -200,5 +200,10 @@ async def validate_key(env_var: str, api_key: str) -> tuple[bool, str]:
         return False, "Invalid key (401 Unauthorized)"
     except litellm.BadRequestError as e:
         return False, f"Bad request: {e}"
+    except litellm.RateLimitError:
+        # Key is valid but provider is rate-limiting — treat as degraded
+        raise
+    except litellm.ServiceUnavailableError:
+        raise
     except Exception as e:
-        return False, f"Error: {e}"
+        return False, f"Error: {str(e)[:80]}"

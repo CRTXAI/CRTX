@@ -5,7 +5,10 @@
       "Bash(git commit:*)",
       "Bash(git add:*)",
       "Bash(git push:*)",
-      "Bash(python -m ruff check:*)"
+      "Bash(python -m ruff check:*)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/ -q --tb=short)",
+      "Bash(pip show:*)",
+      "Bash(pip install:*)"
     ]
   }
 }

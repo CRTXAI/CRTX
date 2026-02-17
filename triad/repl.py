@@ -56,9 +56,13 @@ class TriadREPL:
         self.mode = "sequential"
         self.route = "hybrid"
         self.arbiter = "bookend"
+        # Cached provider health — populated once at startup
+        # Maps env_var -> ("ok" | "degraded" | "error" | "none", detail)
+        self._provider_health: dict[str, tuple[str, str]] = {}
 
     def run(self) -> None:
         """Main REPL loop."""
+        self._check_providers()
         self._print_status_dashboard()
         self._print_quick_start()
 
@@ -79,25 +83,93 @@ class TriadREPL:
                 console.print(f"\n[{BRAND['dim']}]Goodbye.[/{BRAND['dim']}]")
                 break
 
-    def _print_status_dashboard(self) -> None:
-        """Print the provider/model/defaults status panel."""
-        from triad.keys import PROVIDER_NAMES, PROVIDERS, load_keys_env
+    def _check_providers(self) -> None:
+        """Validate provider connectivity once and cache the results.
 
-        # Load keys so os.environ is populated
+        Runs at REPL startup only. Makes a lightweight API call per
+        configured provider to verify the key works. Errors are caught
+        and recorded — they never crash the REPL.
+        """
+        from triad.keys import PROVIDERS, load_keys_env, validate_key
+
         load_keys_env()
 
-        # ── Provider connectivity ─────────────────────────────────
+        async def _validate_all() -> dict[str, tuple[str, str]]:
+            import litellm
+
+            results: dict[str, tuple[str, str]] = {}
+            for env_var, _, _, _ in PROVIDERS:
+                api_key = os.environ.get(env_var, "")
+                if not api_key:
+                    results[env_var] = ("none", "")
+                    continue
+                try:
+                    ok, detail = await validate_key(env_var, api_key)
+                    if ok:
+                        results[env_var] = ("ok", detail)
+                    else:
+                        results[env_var] = ("error", detail)
+                except (
+                    litellm.RateLimitError,
+                    litellm.ServiceUnavailableError,
+                ) as e:
+                    reason = "rate limited" if "429" in str(e) else "quota"
+                    results[env_var] = ("degraded", reason)
+                except Exception as e:
+                    results[env_var] = ("error", str(e)[:60])
+            return results
+
+        try:
+            with console.status(
+                "[bold blue]Checking providers...", spinner="dots",
+            ):
+                self._provider_health = asyncio.run(_validate_all())
+        except Exception:
+            logger.debug("Provider health check failed, using key-only status")
+            # Fallback: mark configured keys as ok, skip validation
+            for env_var, _, _, _ in PROVIDERS:
+                if os.environ.get(env_var):
+                    self._provider_health[env_var] = ("ok", "key present")
+                else:
+                    self._provider_health[env_var] = ("none", "")
+
+    def _print_status_dashboard(self) -> None:
+        """Print the provider/model/defaults status panel.
+
+        Uses cached health data from ``_check_providers()`` — never
+        makes API calls itself.
+        """
+        from triad.keys import PROVIDER_NAMES, PROVIDERS
+
+        # ── Provider connectivity (from cached health) ────────────
         provider_text = Text("  Providers:  ")
         for env_var, _, _, _ in PROVIDERS:
             name = PROVIDER_NAMES.get(env_var, env_var)
-            has_key = bool(os.environ.get(env_var))
-            if has_key:
+            status, detail = self._provider_health.get(
+                env_var, ("none", ""),
+            )
+            if status == "ok":
                 provider_text.append_text(
                     Text.from_markup(f"[green]✓[/green] {name}  ")
                 )
+            elif status == "degraded":
+                suffix = f" ({detail})" if detail else ""
+                provider_text.append_text(
+                    Text.from_markup(
+                        f"[yellow]⚠[/yellow] {name}{suffix}  "
+                    )
+                )
+            elif status == "error":
+                provider_text.append_text(
+                    Text.from_markup(
+                        f"[red]✗[/red] [dim]{name}[/dim]  "
+                    )
+                )
             else:
                 provider_text.append_text(
-                    Text.from_markup(f"[dim red]✗[/dim red] [dim]{name}[/dim]  ")
+                    Text.from_markup(
+                        f"[dim red]✗[/dim red] [dim]{name}[/dim]  "
+                    )
                 )
 
         # ── Model count ───────────────────────────────────────────

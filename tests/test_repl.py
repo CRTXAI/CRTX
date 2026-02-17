@@ -254,13 +254,13 @@ class TestStatusDashboard:
                     return
         raise AssertionError("No Panel found")
 
-    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=False)
     @patch("triad.repl.console")
     def test_dashboard_detects_configured_key(self, mock_console):
-        """Dashboard shows checkmark for a configured provider."""
+        """Dashboard shows checkmark for a provider marked 'ok' in cache."""
         from rich.panel import Panel
 
         repl = TriadREPL()
+        repl._provider_health["ANTHROPIC_API_KEY"] = ("ok", "Connected")
         repl._print_status_dashboard()
         for call in mock_console.print.call_args_list:
             for arg in call[0]:
@@ -271,11 +271,30 @@ class TestStatusDashboard:
         raise AssertionError("No Panel found")
 
     @patch("triad.repl.console")
+    def test_dashboard_shows_degraded_provider(self, mock_console):
+        """Dashboard shows warning icon for a rate-limited provider."""
+        from rich.panel import Panel
+
+        repl = TriadREPL()
+        repl._provider_health["GEMINI_API_KEY"] = ("degraded", "quota")
+        repl._print_status_dashboard()
+        for call in mock_console.print.call_args_list:
+            for arg in call[0]:
+                if isinstance(arg, Panel):
+                    body = arg.renderable.plain
+                    assert "\u26a0" in body  # ⚠
+                    assert "quota" in body
+                    return
+        raise AssertionError("No Panel found")
+
+    @patch("triad.repl.console")
     def test_run_calls_dashboard(self, mock_console):
-        """run() calls _print_status_dashboard before entering loop."""
+        """run() calls _check_providers and _print_status_dashboard before entering loop."""
         mock_console.input.side_effect = KeyboardInterrupt
         repl = TriadREPL()
-        with patch.object(repl, "_print_status_dashboard") as mock_dash:
-            with patch.object(repl, "_print_quick_start"):
-                repl.run()
-            mock_dash.assert_called_once()
+        with patch.object(repl, "_check_providers") as mock_check:
+            with patch.object(repl, "_print_status_dashboard") as mock_dash:
+                with patch.object(repl, "_print_quick_start"):
+                    repl.run()
+                mock_check.assert_called_once()
+                mock_dash.assert_called_once()
