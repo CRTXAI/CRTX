@@ -1,8 +1,8 @@
-"""Compact streaming display with a pinned status bar.
+"""Scrolling streaming display with a pinned status bar.
 
-Prints compact stage lifecycle events above a single-line Rich Live
-status bar. No code output during streaming — just stage starts,
-a live token counter, completions, and arbiter verdicts.
+Prints file headers and stage lifecycle events above a single-line
+Rich Live status bar. Code content is swallowed — only file names
+scroll during streaming.
 """
 
 from __future__ import annotations
@@ -52,14 +52,6 @@ _STATE_MARKUP: dict[StageState, str] = {
     StageState.FALLBACK: "[bold yellow]⚠[/bold yellow]",
     StageState.FAILED: "[bold red]✗[/bold red]",
 }
-
-_STAGE_HINTS: dict[str, str] = {
-    "architect": "Designing architecture...",
-    "implement": "Generating implementation...",
-    "refactor": "Refactoring code...",
-    "verify": "Running verification...",
-}
-
 
 # ── Stream buffer ─────────────────────────────────────────────────
 
@@ -198,15 +190,20 @@ def _format_tokens(count: int) -> str:
     return str(count)
 
 
-# ── Compact streaming display ─────────────────────────────────────
+# ── Scrolling streaming display ───────────────────────────────────
 
 
 class ScrollingPipelineDisplay:
-    """Compact streaming display with a pinned status bar.
+    """Scrolling streaming display with a pinned status bar.
 
-    During streaming, only shows stage lifecycle events and a live
-    token counter. No code output — that moves to the post-run viewer.
+    Prints file headers and stage lifecycle events above a single-line
+    Rich Live status bar. Code content is swallowed — only file names
+    scroll during streaming.
     """
+
+    _FILE_HEADER_RE = re.compile(r"#\s*file:\s*(\S+)")
+    _FENCE_OPEN_RE = re.compile(r"```(\w+)?\s*$")
+    _FENCE_CLOSE_RE = re.compile(r"^```\s*$")
 
     def __init__(
         self,
@@ -239,7 +236,12 @@ class ScrollingPipelineDisplay:
         # Stream buffers (for file-level tracking)
         self._stream_buffers: dict[str, StreamBuffer] = {}
 
-        # Rich Live — renders both the progress line and status bar
+        # Line buffer for stream processing
+        self._line_buffer: str = ""
+        self._in_code_fence: bool = False
+        self._file_count: int = 0
+
+        # Rich Live — renders the status bar
         self._live: Live | None = None
 
         # Initialize stage states
@@ -293,7 +295,8 @@ class ScrollingPipelineDisplay:
     def create_stream_callback(self) -> Callable:
         """Create a callback for streaming token delivery.
 
-        Only increments the token counter — no content display.
+        Appends deltas to a line buffer, flushes complete lines through
+        ``_process_line()`` which prints file headers and swallows code.
         """
 
         async def _on_stream(stage: PipelineStage, chunk: StreamChunk) -> None:
@@ -308,6 +311,10 @@ class ScrollingPipelineDisplay:
                 if stage_name in self._stage_models:
                     self._stage_tokens[stage_name] = chunk.token_count
 
+                # Line buffer processing — detect file headers
+                self._line_buffer += chunk.delta
+                self._flush_complete_lines()
+
         return _on_stream
 
     # ── Printing ───────────────────────────────────────────────────
@@ -319,33 +326,45 @@ class ScrollingPipelineDisplay:
         else:
             self._console.print(markup, highlight=False)
 
+    # ── Line buffer processing ────────────────────────────────────
+
+    def _flush_complete_lines(self) -> None:
+        """Split line buffer on newlines and process complete lines."""
+        while "\n" in self._line_buffer:
+            line, self._line_buffer = self._line_buffer.split("\n", 1)
+            self._process_line(line)
+
+    def _process_line(self, line: str) -> None:
+        """Process a single line from the stream. Only print file headers."""
+        stripped = line.strip()
+
+        # File header → print (only outside code fences)
+        if not self._in_code_fence:
+            match = self._FILE_HEADER_RE.match(stripped)
+            if match:
+                filename = match.group(1)
+                self._file_count += 1
+                self._print_markup(f"  [dim]── {filename}[/]")
+                return
+
+        # If inside a code fence, check for close first
+        if self._in_code_fence:
+            if self._FENCE_CLOSE_RE.match(stripped):
+                self._in_code_fence = False
+            return
+
+        # Track fence open
+        if self._FENCE_OPEN_RE.match(stripped):
+            self._in_code_fence = True
+            return
+
+        # Everything else → swallow (prose, diffs)
+
     # ── Live renderable ────────────────────────────────────────────
 
     def _build_live_renderable(self) -> Text:
-        """Build the live renderable: progress line + status bar.
-
-        When a stage is active, shows a progress line with stage hint
-        and token count, plus the 1-line status bar below it.
-        When no stage is active, just the status bar.
-        """
-        result = Text()
-
-        # Progress line for active stage
-        if self._current_stage and self._stage_states.get(self._current_stage) == StageState.ACTIVE:
-            hint = _STAGE_HINTS.get(self._current_stage, "Processing...")
-            tokens = self._stage_tokens.get(self._current_stage, 0)
-            tok_str = _format_tokens(tokens)
-            result.append(f"  {hint}", style="dim")
-            # Right-align the token counter with block chars
-            padding = max(1, 50 - len(hint))
-            result.append(" " * padding)
-            result.append(f"▪▪▪ {tok_str} tokens", style="dim")
-            result.append("\n")
-
-        # Status bar
-        result.append_text(self._build_status_bar())
-
-        return result
+        """Build the live renderable: the 1-line pinned status bar."""
+        return self._build_status_bar()
 
     def _build_status_bar(self) -> Text:
         """Build the 1-line pinned status bar.
@@ -421,10 +440,17 @@ class ScrollingPipelineDisplay:
                 self._active_model = None
                 self._active_model_stage = None
             self._current_stage = ""
+            # Flush any remaining partial line
+            if self._line_buffer.strip():
+                self._process_line(self._line_buffer)
+                self._line_buffer = ""
+            file_note = f", {self._file_count} files" if self._file_count > 0 else ""
             self._print_markup(
                 f"[green]● {stage.title()} completed[/green] "
-                f"(${cost:.3f}, {duration:.1f}s)"
+                f"[dim](${cost:.3f}, {duration:.1f}s{file_note})[/dim]"
             )
+            self._file_count = 0
+            self._in_code_fence = False
 
         elif etype == EventType.ARBITER_STARTED:
             stage = data.get("stage", "?")
@@ -436,14 +462,19 @@ class ScrollingPipelineDisplay:
             stage = data.get("stage", "?")
             verdict = data.get("verdict", "?")
             confidence = data.get("confidence", 0.0)
+            reasoning = data.get("reasoning", "")
             style = {
                 "approve": "green", "flag": "yellow",
                 "reject": "red", "halt": "bright_red",
             }.get(verdict, "white")
+            reason_brief = ""
+            if reasoning:
+                first_sentence = reasoning.split(". ")[0].split("\n")[0][:80]
+                reason_brief = f" — {first_sentence}"
             self._print_markup(
                 f"  [magenta]⚖ Arbiter {stage}:[/magenta] "
                 f"[{style}]{verdict.upper()}[/{style}] "
-                f"(conf {confidence:.2f})"
+                f"[dim](conf {confidence:.2f}){reason_brief}[/dim]"
             )
 
         elif etype == EventType.RETRY_TRIGGERED:

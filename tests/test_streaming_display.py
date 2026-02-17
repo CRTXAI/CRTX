@@ -1,4 +1,4 @@
-"""Tests for the compact streaming pipeline display."""
+"""Tests for the scrolling streaming pipeline display."""
 
 from __future__ import annotations
 
@@ -253,22 +253,27 @@ class TestTokenCounter:
         assert display._total_tokens == 10
         assert display._stage_tokens["architect"] == 10
 
-    def test_stream_callback_no_content_display(self):
-        """Stream callback should not store any line buffer or code state."""
+    def test_stream_callback_tracks_fences(self):
+        """Stream callback should track fence state via line buffer."""
         console = Console(quiet=True)
         display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
         callback = display.create_stream_callback()
 
         chunk = StreamChunk(
-            delta="```python\nprint('hello')\n```\n",
+            delta="```python\nprint('hello')\n",
+            accumulated="```python\nprint('hello')\n",
+            token_count=5,
+        )
+        asyncio.run(callback(PipelineStage.ARCHITECT, chunk))
+        assert display._in_code_fence is True
+
+        chunk2 = StreamChunk(
+            delta="```\n",
             accumulated="```python\nprint('hello')\n```\n",
             token_count=10,
         )
-        asyncio.run(callback(PipelineStage.ARCHITECT, chunk))
-
-        # No line buffer fields should exist
-        assert not hasattr(display, "_line_buffer")
-        assert not hasattr(display, "_in_code_fence")
+        asyncio.run(callback(PipelineStage.ARCHITECT, chunk2))
+        assert display._in_code_fence is False
 
 
 class TestStatusBar:
@@ -320,54 +325,84 @@ class TestStatusBar:
         assert "Architect" in result.plain
 
 
-class TestProgressLine:
-    """Tests for the live progress line with stage hint + tokens."""
+class TestFileFiltering:
+    """Tests for file-header-only filtering in the stream callback."""
 
-    def test_progress_line_shown_when_active(self):
+    def test_file_header_increments_count(self):
+        """File header lines should increment _file_count."""
         console = Console(quiet=True)
         display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
-        display._current_stage = "architect"
-        display._stage_states["architect"] = StageState.ACTIVE
-        display._stage_tokens["architect"] = 2100
+        callback = display.create_stream_callback()
 
-        renderable = display._build_live_renderable()
-        plain = renderable.plain
-        assert "Designing architecture..." in plain
-        assert "2.1K tokens" in plain
+        chunk = StreamChunk(
+            delta="# file: src/app.py\n```python\nprint('hi')\n```\n",
+            accumulated="# file: src/app.py\n```python\nprint('hi')\n```\n",
+            token_count=10,
+        )
+        asyncio.run(callback(PipelineStage.ARCHITECT, chunk))
+        assert display._file_count == 1
 
-    def test_no_progress_line_when_idle(self):
+    def test_multiple_files_counted(self):
+        """Multiple file headers should all be counted."""
         console = Console(quiet=True)
         display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
-        display._current_stage = ""
+        callback = display.create_stream_callback()
 
-        renderable = display._build_live_renderable()
-        plain = renderable.plain
-        # Should NOT contain any stage hint
-        assert "Designing architecture" not in plain
-        assert "Generating implementation" not in plain
+        text = (
+            "# file: src/a.py\n```python\nx=1\n```\n"
+            "# file: src/b.py\n```python\ny=2\n```\n"
+            "# file: src/c.py\n```python\nz=3\n```\n"
+        )
+        chunk = StreamChunk(delta=text, accumulated=text, token_count=20)
+        asyncio.run(callback(PipelineStage.ARCHITECT, chunk))
+        assert display._file_count == 3
 
-    def test_stage_completed_clears_progress(self):
+    def test_stage_complete_resets_file_count(self):
+        """Stage completion should reset _file_count to 0."""
         console = Console(quiet=True)
         display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
+        display._file_count = 5
         listener = display.create_listener()
 
-        # Start stage
         listener(PipelineEvent(
             type=EventType.STAGE_STARTED,
-            data={"stage": "architect", "model": "o3"},
+            data={"stage": "architect", "model": "test"},
         ))
-        assert display._current_stage == "architect"
-
-        # Complete stage
         listener(PipelineEvent(
             type=EventType.STAGE_COMPLETED,
             data={"stage": "architect", "cost": 0.1, "duration": 5.0},
         ))
-        assert display._current_stage == ""
+        assert display._file_count == 0
 
-        # Progress line should be gone
+    def test_stage_complete_resets_fence_state(self):
+        """Stage completion should reset _in_code_fence."""
+        console = Console(quiet=True)
+        display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
+        display._in_code_fence = True
+        listener = display.create_listener()
+
+        listener(PipelineEvent(
+            type=EventType.STAGE_STARTED,
+            data={"stage": "architect", "model": "test"},
+        ))
+        listener(PipelineEvent(
+            type=EventType.STAGE_COMPLETED,
+            data={"stage": "architect", "cost": 0.1, "duration": 5.0},
+        ))
+        assert display._in_code_fence is False
+
+    def test_live_renderable_is_status_bar_only(self):
+        """Live renderable should be the status bar with no progress hint."""
+        console = Console(quiet=True)
+        display = ScrollingPipelineDisplay(console, "sequential", "hybrid", "bookend")
+        display._current_stage = "architect"
+        display._stage_states["architect"] = StageState.ACTIVE
+
         renderable = display._build_live_renderable()
-        assert "Designing architecture" not in renderable.plain
+        plain = renderable.plain
+        # Should contain stage names (status bar) but no hint text
+        assert "Architect" in plain
+        assert "Designing architecture" not in plain
 
 
 class TestInlinePrinting:
