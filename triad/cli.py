@@ -16,6 +16,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from triad.keys import load_keys_env
 from triad.providers.registry import load_models, load_pipeline_config
 from triad.schemas.pipeline import (
     ArbiterMode,
@@ -25,6 +26,9 @@ from triad.schemas.pipeline import (
 )
 from triad.schemas.routing import RoutingStrategy
 
+# Load API keys from ~/.triad/keys.env and .env on startup
+load_keys_env()
+
 console = Console()
 
 # ── App and sub-apps ─────────────────────────────────────────────
@@ -32,7 +36,7 @@ console = Console()
 app = typer.Typer(
     name="triad",
     help="Multi-model AI orchestration with adversarial Arbiter review.",
-    no_args_is_help=True,
+    no_args_is_help=False,
     rich_markup_mode="rich",
 )
 
@@ -56,6 +60,20 @@ sessions_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(sessions_app, name="sessions")
+
+
+# ── App Callback ────────────────────────────────────────────────
+
+
+@app.callback(invoke_without_command=True)
+def main(ctx: typer.Context) -> None:
+    """Multi-model AI orchestration with adversarial Arbiter review."""
+    if ctx.invoked_subcommand is None:
+        from triad.cli_display import render_full_logo
+        from triad.repl import TriadREPL
+
+        render_full_logo(console)
+        TriadREPL().run()
 
 
 # ── Helpers ──────────────────────────────────────────────────────
@@ -88,21 +106,241 @@ def _verdict_style(verdict: str) -> str:
     }.get(verdict.lower(), "white")
 
 
+# ── triad setup ──────────────────────────────────────────────────
+
+
+@app.command()
+def setup(
+    check: bool = typer.Option(
+        False, "--check",
+        help="Validate existing keys without prompting",
+    ),
+    reset: bool = typer.Option(
+        False, "--reset",
+        help="Clear saved keys and re-run setup",
+    ),
+) -> None:
+    """Walk through interactive API key configuration.
+
+    First-time setup for new users. Prompts for provider API keys,
+    validates them, and saves to ~/.triad/keys.env.
+    """
+    from rich.prompt import Prompt
+
+    from triad.keys import (
+        KEYS_FILE,
+        PROVIDER_NAMES,
+        PROVIDERS,
+        clear_keys,
+        get_configured_keys,
+        has_any_key,
+        save_keys,
+        validate_key,
+    )
+
+    # --check: just validate existing keys
+    if check:
+        _setup_check()
+        return
+
+    # --reset: clear and re-run
+    if reset:
+        removed = clear_keys()
+        if removed:
+            console.print(f"[dim]Cleared {KEYS_FILE}[/dim]\n")
+        else:
+            console.print("[dim]No saved keys to clear.[/dim]\n")
+        # Clear env vars that came from the file so they're re-prompted
+        for env_var, _, _, _ in PROVIDERS:
+            if env_var in os.environ:
+                del os.environ[env_var]
+
+    # Banner
+    console.print()
+    banner = Text()
+    banner.append("     ◆\n", style="#00ffbb")
+    banner.append("    ╱", style="#00ff66")
+    banner.append("◈", style="#D4A843")
+    banner.append("╲", style="#00ff66")
+    banner.append("    Triad Orchestrator v0.1.0\n", style="#00ff88")
+    banner.append("   ◆", style="#00ffbb")
+    banner.append("──", style="#00ff66")
+    banner.append("◆", style="#00ffbb")
+    banner.append("   First-time setup\n", style="#6a8a6a")
+    console.print(banner)
+
+    console.print(
+        "  Triad needs API keys to call AI models. You only need [bold]ONE[/bold] provider\n"
+        "  to get started, but more providers = better model selection.\n"
+    )
+    console.print("  [bold]── Provider Setup ────────────────────────────────────────────[/bold]\n")
+
+    # Collect keys
+    collected_keys: dict[str, str] = {}
+
+    for i, (env_var, display_name, description, signup_url) in enumerate(PROVIDERS, 1):
+        # Check if already set in environment
+        existing = os.environ.get(env_var, "")
+
+        console.print(f"  [bold][{i}] {display_name}[/bold]     — {description}")
+        console.print(f"      Get a key: [link={signup_url}]{signup_url}[/link]")
+
+        if existing:
+            console.print(f"      {env_var}: [green]already set in environment[/green]\n")
+            collected_keys[env_var] = existing
+            continue
+
+        key = Prompt.ask(
+            f"      {env_var}",
+            default="",
+            show_default=False,
+            password=True,
+            console=console,
+        )
+
+        if key.strip():
+            collected_keys[env_var] = key.strip()
+            console.print(f"      [green]✓ Set[/green]\n")
+        else:
+            console.print(f"      [dim]⊘ Skipped[/dim]\n")
+
+    # Check at least one key provided
+    if not collected_keys:
+        console.print("  [red]No API keys provided.[/red] You need at least one provider.")
+        console.print("  Run [bold]triad setup[/bold] again when you have a key.\n")
+        raise typer.Exit(1) from None
+
+    # Validate keys
+    console.print("  [bold]── Validating Keys ───────────────────────────────────────────[/bold]\n")
+
+    validated_keys: dict[str, str] = {}
+    active_count = 0
+
+    async def _validate_all():
+        results = {}
+        for env_var in [e for e, _, _, _ in PROVIDERS]:
+            key_val = collected_keys.get(env_var, "")
+            if key_val:
+                ok, detail = await validate_key(env_var, key_val)
+                results[env_var] = (ok, detail)
+            else:
+                results[env_var] = (None, "Skipped")
+        return results
+
+    with console.status("[bold blue]Validating keys...", spinner="dots"):
+        results = asyncio.run(_validate_all())
+
+    for env_var, _, _, _ in PROVIDERS:
+        name = PROVIDER_NAMES[env_var]
+        ok, detail = results[env_var]
+        if ok is True:
+            console.print(f"  {name:<10} [green]✓ {detail}[/green]")
+            validated_keys[env_var] = collected_keys[env_var]
+            active_count += 1
+        elif ok is False:
+            console.print(f"  {name:<10} [red]✗ {detail}[/red]")
+            # Still save the key — user might fix the issue later
+            validated_keys[env_var] = collected_keys[env_var]
+        else:
+            console.print(f"  {name:<10} [dim]⊘ Skipped[/dim]")
+
+    if active_count == 0:
+        console.print(
+            "\n  [yellow]Warning:[/yellow] No keys validated successfully. "
+            "Keys are saved but may not work."
+        )
+
+    # Save keys
+    saved_path = save_keys(validated_keys)
+
+    # Also set them in the current environment
+    for env_var, value in validated_keys.items():
+        if value:
+            os.environ[env_var] = value
+
+    # Count available models
+    try:
+        registry = load_models()
+        available_providers = {
+            cfg.api_key_env for cfg in registry.values()
+            if os.environ.get(cfg.api_key_env)
+        }
+        model_count = sum(
+            1 for cfg in registry.values()
+            if cfg.api_key_env in available_providers and os.environ.get(cfg.api_key_env)
+        )
+    except Exception:
+        model_count = 0
+
+    console.print()
+    console.print("  [bold]── Configuration Saved ───────────────────────────────────────[/bold]\n")
+    console.print(f"  Keys saved to: [bold]{saved_path}[/bold]")
+    console.print(
+        f"  {active_count} provider{'s' if active_count != 1 else ''} active"
+        + (f", {model_count} models available" if model_count else "")
+    )
+    console.print()
+    console.print(
+        "  Run [bold]triad[/bold] to start, or [bold]triad run \"your task\"[/bold] for a quick test.\n"
+    )
+
+
+def _setup_check() -> None:
+    """Validate existing keys without prompting (--check flag)."""
+    from triad.keys import PROVIDER_NAMES, PROVIDERS, get_configured_keys, validate_key
+
+    keys = get_configured_keys()
+
+    has_any = any(keys.values())
+    if not has_any:
+        console.print("[dim]No API keys configured.[/dim] Run [bold]triad setup[/bold] to get started.")
+        raise typer.Exit(1) from None
+
+    async def _validate_all():
+        results = {}
+        for env_var, _, _, _ in PROVIDERS:
+            key_val = keys.get(env_var, "")
+            if key_val:
+                ok, detail = await validate_key(env_var, key_val)
+                results[env_var] = (ok, detail)
+            else:
+                results[env_var] = (None, "Not configured")
+        return results
+
+    with console.status("[bold blue]Validating keys...", spinner="dots"):
+        results = asyncio.run(_validate_all())
+
+    any_invalid = False
+    for env_var, _, _, _ in PROVIDERS:
+        name = PROVIDER_NAMES[env_var]
+        ok, detail = results[env_var]
+        if ok is True:
+            console.print(f"{name:<10} [green]✓ {detail}[/green]")
+        elif ok is False:
+            console.print(f"{name:<10} [red]✗ {detail}[/red]")
+            any_invalid = True
+        else:
+            console.print(f"{name:<10} [dim]⊘ {detail}[/dim]")
+
+    if any_invalid:
+        raise typer.Exit(1) from None
+
+
 # ── triad run ────────────────────────────────────────────────────
 
 @app.command()
 def run(
     task: str = typer.Argument(..., help="Task description — what to build"),
     mode: str = typer.Option(
-        "sequential", "--mode", "-m",
+        None, "--mode", "-m",
         help="Pipeline mode: sequential, parallel, or debate",
     ),
     route: str = typer.Option(
-        "hybrid", "--route", "-r",
+        None, "--route", "-r",
         help="Routing strategy: quality_first, cost_optimized, speed_first, hybrid",
     ),
     arbiter: str = typer.Option(
-        "bookend", "--arbiter", "-a",
+        None, "--arbiter", "-a",
         help="Arbiter mode: off, final_only, bookend, full",
     ),
     reconcile: bool = typer.Option(
@@ -118,7 +356,7 @@ def run(
         help="Path to domain rules file (TOML)",
     ),
     timeout: int = typer.Option(
-        120, "--timeout", "-t",
+        300, "--timeout", "-t",
         help="Default per-stage timeout in seconds",
     ),
     max_retries: int = typer.Option(
@@ -151,6 +389,43 @@ def run(
     ),
 ) -> None:
     """Execute a pipeline run with the specified task and options."""
+    from triad.keys import has_any_key
+
+    if not has_any_key():
+        console.print(
+            "[red]No API keys configured.[/red] "
+            "Run [bold]triad setup[/bold] to get started."
+        )
+        raise typer.Exit(1) from None
+
+    from triad.cli_display import (
+        CompletionSummary,
+        ConfigScreen,
+        PipelineDisplay,
+    )
+
+    registry = _load_registry()
+    base_config = _load_config()
+
+    # Detect whether flags were explicitly set
+    explicit_flags = mode is not None or route is not None or arbiter is not None
+
+    # Load defaults from config for unset flags
+    if mode is None:
+        mode = base_config.pipeline_mode.value
+    if route is None:
+        route = base_config.routing_strategy.value
+    if arbiter is None:
+        arbiter = base_config.arbiter_mode.value
+
+    # Interactive config screen when no explicit flags
+    if not explicit_flags:
+        config_screen = ConfigScreen(task, base_config, registry)
+        result = config_screen.show(console)
+        if result is None:
+            raise typer.Exit(0)
+        mode, route, arbiter = result
+
     # Validate enums
     try:
         pipeline_mode = PipelineMode(mode)
@@ -188,9 +463,6 @@ def run(
             raise typer.Exit(1) from None
         domain_context = rules_path.read_text(encoding="utf-8")
 
-    registry = _load_registry()
-    base_config = _load_config()
-
     config = PipelineConfig(
         pipeline_mode=pipeline_mode,
         arbiter_mode=arbiter_mode,
@@ -218,25 +490,42 @@ def run(
         output_dir=output_dir,
     )
 
-    # Show task summary
-    _display_task_panel(task_spec, config)
-
-    # Run pipeline
+    # Run pipeline with real-time display and event emitter
+    from triad.dashboard.events import PipelineEventEmitter
     from triad.orchestrator import run_pipeline
 
-    console.print()
-    with console.status("[bold blue]Running pipeline...", spinner="dots"):
-        result = asyncio.run(run_pipeline(task_spec, config, registry))
+    emitter = PipelineEventEmitter()
+    display = PipelineDisplay(console, mode, route, arbiter)
+    emitter.add_listener(display.create_listener())
+
+    live = display.start()
+    try:
+        pipeline_result = asyncio.run(run_pipeline(task_spec, config, registry, emitter))
+    finally:
+        display.stop()
 
     # Display results
     console.print()
-    _display_result(result)
+    _display_result(pipeline_result)
 
     # Write output files
     from triad.output.writer import write_pipeline_output
 
-    write_pipeline_output(result, output_dir)
+    write_pipeline_output(pipeline_result, output_dir)
     console.print(f"\n[dim]Output written to:[/dim] {output_dir}/")
+
+    # Interactive completion summary
+    summary = CompletionSummary(console, pipeline_result, output_dir)
+    action = summary.show()
+    if action == "rerun":
+        # Re-invoke the run command with same arguments
+        run(
+            task=task, mode=mode, route=route, arbiter=arbiter,
+            reconcile=reconcile, context=context, domain_rules=domain_rules,
+            timeout=timeout, max_retries=max_retries, no_persist=no_persist,
+            output_dir=output_dir, context_dir=context_dir, include=include,
+            exclude=exclude, context_budget=context_budget,
+        )
 
 
 def _display_task_panel(task_spec: TaskSpec, config: PipelineConfig) -> None:
