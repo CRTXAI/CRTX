@@ -101,6 +101,44 @@ implementer = 0.75
 refactorer = 0.70
 verifier = 0.75
 
+[models.gpt-4o-mini]
+provider = "openai"
+model = "gpt-4o-mini"
+display_name = "GPT-4o Mini"
+api_key_env = "OPENAI_API_KEY"
+context_window = 128000
+supports_tools = true
+supports_structured = true
+supports_vision = true
+supports_thinking = false
+cost_input = 0.15
+cost_output = 0.60
+
+[models.gpt-4o-mini.fitness]
+architect = 0.60
+implementer = 0.70
+refactorer = 0.60
+verifier = 0.65
+
+[models.o3]
+provider = "openai"
+model = "o3"
+display_name = "o3"
+api_key_env = "OPENAI_API_KEY"
+context_window = 200000
+supports_tools = true
+supports_structured = true
+supports_vision = true
+supports_thinking = true
+cost_input = 10.00
+cost_output = 40.00
+
+[models.o3.fitness]
+architect = 0.88
+implementer = 0.82
+refactorer = 0.85
+verifier = 0.90
+
 # ─── Google ──────────────────────────────────────────────────
 
 [models.gemini-pro]
