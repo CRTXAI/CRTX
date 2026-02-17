@@ -21,24 +21,13 @@ from triad.schemas.routing import CostEstimate, RoutingDecision, RoutingStrategy
 
 logger = logging.getLogger(__name__)
 
-# Output token estimates per stage (conservative)
-_OUTPUT_ESTIMATES: dict[PipelineStage, int] = {
-    PipelineStage.ARCHITECT: 3_000,
-    PipelineStage.IMPLEMENT: 6_000,
-    PipelineStage.REFACTOR: 5_000,
-    PipelineStage.VERIFY: 4_000,
+# Conservative token estimates per stage (input, output)
+_TOKEN_ESTIMATES: dict[PipelineStage, tuple[int, int]] = {
+    PipelineStage.ARCHITECT: (50_000, 8_000),
+    PipelineStage.IMPLEMENT: (40_000, 12_000),
+    PipelineStage.REFACTOR: (60_000, 15_000),
+    PipelineStage.VERIFY: (60_000, 15_000),
 }
-
-# Input tokens accumulated from prior stage outputs
-_STAGE_ACCUMULATION: dict[PipelineStage, int] = {
-    PipelineStage.ARCHITECT: 0,        # No prior output
-    PipelineStage.IMPLEMENT: 4_000,    # Architect output
-    PipelineStage.REFACTOR: 8_000,     # Architect + Implement
-    PipelineStage.VERIFY: 12_000,      # All prior outputs
-}
-
-# Base overhead: system prompt + role prompt + output schema
-_BASE_INPUT_OVERHEAD = 3_000
 
 # Strategy dispatcher
 _STRATEGY_FN = {
@@ -59,27 +48,9 @@ _STAGES: list[PipelineStage] = [
 ]
 
 
-def _estimate_stage_cost(
-    config: ModelConfig,
-    stage: PipelineStage,
-    context_tokens: int = 0,
-    task_tokens: int = 500,
-) -> float:
-    """Estimate the USD cost for a single stage based on actual context size.
-
-    Args:
-        config: Model configuration with cost rates.
-        stage: Pipeline stage being estimated.
-        context_tokens: Injected project context tokens (0 when no --context-dir).
-        task_tokens: Approximate tokens from the task description.
-    """
-    input_tokens = (
-        _BASE_INPUT_OVERHEAD
-        + task_tokens
-        + context_tokens
-        + _STAGE_ACCUMULATION[stage]
-    )
-    output_tokens = _OUTPUT_ESTIMATES[stage]
+def _estimate_stage_cost(config: ModelConfig, stage: PipelineStage) -> float:
+    """Estimate the USD cost for a single stage based on token estimates."""
+    input_tokens, output_tokens = _TOKEN_ESTIMATES[stage]
     input_cost = (input_tokens / 1_000_000) * config.cost_input
     output_cost = (output_tokens / 1_000_000) * config.cost_output
     return input_cost + output_cost
@@ -99,14 +70,10 @@ class RoutingEngine:
         config: PipelineConfig,
         registry: dict[str, ModelConfig],
         health: object | None = None,
-        context_tokens: int = 0,
-        task_tokens: int = 500,
     ) -> None:
         self._config = config
         self._registry = registry
         self._health = health  # ProviderHealth instance (optional)
-        self._context_tokens = context_tokens
-        self._task_tokens = task_tokens
 
     def select_model(
         self,
@@ -152,9 +119,7 @@ class RoutingEngine:
                 strategy=effective_strategy,
                 rationale=f"Per-stage override: {override_key}",
                 fitness_score=fitness,
-                estimated_cost=_estimate_stage_cost(
-                    model_cfg, role, self._context_tokens, self._task_tokens,
-                ),
+                estimated_cost=_estimate_stage_cost(model_cfg, role),
             )
 
         # Filter to healthy models, fall back to full registry if all unhealthy
@@ -176,9 +141,7 @@ class RoutingEngine:
             strategy=effective_strategy,
             rationale=rationale,
             fitness_score=fitness,
-            estimated_cost=_estimate_stage_cost(
-                model_cfg, role, self._context_tokens, self._task_tokens,
-            ),
+            estimated_cost=_estimate_stage_cost(model_cfg, role),
         )
 
         logger.info(
@@ -192,7 +155,7 @@ class RoutingEngine:
         return decision
 
     # Maximum number of stages a single model can be assigned to
-    _MAX_STAGES_PER_MODEL = 1
+    _MAX_STAGES_PER_MODEL = 2
 
     def select_pipeline_models(
         self,
@@ -297,9 +260,7 @@ class RoutingEngine:
             strategy=self._config.routing_strategy,
             rationale=f"Fallback: best available after excluding {exclude_models}",
             fitness_score=fitness,
-            estimated_cost=_estimate_stage_cost(
-                model_cfg, role, self._context_tokens, self._task_tokens,
-            ),
+            estimated_cost=_estimate_stage_cost(model_cfg, role),
         )
         logger.info(
             "Fallback routing %s → %s (fitness=%.2f)",
@@ -326,30 +287,22 @@ def estimate_cost(
     config: PipelineConfig,
     registry: dict[str, ModelConfig],
     strategy: RoutingStrategy | None = None,
-    task_text: str = "",
 ) -> CostEstimate:
     """Estimate the total cost of a pipeline run under a given strategy.
 
-    Uses context-aware token estimates per stage and the model's published
+    Uses conservative token estimates per stage and the model's published
     cost rates. Does not include Arbiter review costs.
 
     Args:
         config: Pipeline configuration.
         registry: Model registry.
         strategy: Override strategy (defaults to config.routing_strategy).
-        task_text: The task description (used to estimate task tokens).
 
     Returns:
         CostEstimate with per-stage decisions and total cost.
     """
     effective_strategy = strategy or config.routing_strategy
-    context_tokens = config.context_token_budget if config.context_dir else 0
-    task_tokens = max(100, len(task_text) // 4) if task_text else 500
-    engine = RoutingEngine(
-        config, registry,
-        context_tokens=context_tokens,
-        task_tokens=task_tokens,
-    )
+    engine = RoutingEngine(config, registry)
     decisions = engine.select_pipeline_models(effective_strategy)
     total = sum(d.estimated_cost for d in decisions)
 

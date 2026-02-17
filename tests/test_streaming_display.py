@@ -347,3 +347,86 @@ class TestCostTicker:
         ))
         assert display._active_model is None
         assert display._active_model_stage is None
+
+
+class TestWaitingPanel:
+    """Tests for the informative waiting state panel."""
+
+    def test_waiting_panel_shows_model_and_stage(self):
+        console = Console(quiet=True)
+        display = StreamingPipelineDisplay(console, "sequential", "hybrid", "bookend")
+        listener = display.create_listener()
+        listener(PipelineEvent(
+            type=EventType.STAGE_STARTED,
+            data={"stage": "architect", "model": "gemini-2.5-pro"},
+        ))
+        panel = display._build_waiting_panel()
+        text = panel.renderable.plain
+        assert "gemini-2.5-pro" in text
+        assert "architect" in text
+        assert "Designing architecture" in text
+
+    def test_waiting_panel_shows_elapsed(self):
+        console = Console(quiet=True)
+        display = StreamingPipelineDisplay(console, "sequential", "hybrid", "bookend")
+        listener = display.create_listener()
+        listener(PipelineEvent(
+            type=EventType.STAGE_STARTED,
+            data={"stage": "implement", "model": "gpt-4o"},
+        ))
+        panel = display._build_waiting_panel()
+        text = panel.renderable.plain
+        assert "Waiting for first tokens" in text
+        assert "Writing implementation code" in text
+
+    def test_waiting_panel_no_stage(self):
+        """Waiting panel before any stage starts."""
+        console = Console(quiet=True)
+        display = StreamingPipelineDisplay(console, "sequential", "hybrid", "bookend")
+        panel = display._build_waiting_panel()
+        text = panel.renderable.plain
+        assert "Waiting for first tokens" in text
+
+    def test_stage_start_times_tracked(self):
+        console = Console(quiet=True)
+        display = StreamingPipelineDisplay(console, "sequential", "hybrid", "bookend")
+        listener = display.create_listener()
+        listener(PipelineEvent(
+            type=EventType.STAGE_STARTED,
+            data={"stage": "architect", "model": "test"},
+        ))
+        assert "architect" in display._stage_start_times
+        assert display._stage_start_times["architect"] > 0
+
+
+class TestSyntaxCache:
+    """Tests for syntax object caching."""
+
+    def test_output_dirty_set_by_stream(self):
+        console = Console(quiet=True)
+        display = StreamingPipelineDisplay(console, "sequential", "hybrid", "bookend")
+        callback = display.create_stream_callback()
+        chunk = StreamChunk(delta="hello", accumulated="hello", token_count=1)
+        asyncio.run(callback(PipelineStage.ARCHITECT, chunk))
+        assert display._output_dirty is True
+
+    def test_cached_syntax_reused(self):
+        console = Console(quiet=True)
+        display = StreamingPipelineDisplay(console, "sequential", "hybrid", "bookend")
+        # Set up a buffer with code
+        buf = StreamBuffer()
+        buf.feed("```python\nx = 1\n```\n")
+        buf.feed("```python\ny = 2\n")
+        display._active_buffer = buf
+        display._cached_code_hash = 0
+
+        # Build panel — creates new syntax
+        display._build_output_panel()
+        first_syntax = display._cached_syntax
+        first_hash = display._cached_code_hash
+        assert first_syntax is not None
+        assert first_hash != 0
+
+        # Build again with same code — should reuse cached syntax
+        display._build_output_panel()
+        assert display._cached_syntax is first_syntax

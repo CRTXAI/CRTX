@@ -134,12 +134,7 @@ class PipelineOrchestrator:
         self._session: list[AgentMessage] = []
         self._arbiter = ArbiterEngine(config, registry, health=self._health)
         self._reconciler = ReconciliationEngine(config, registry)
-        context_tokens = config.context_token_budget if config.context_dir else 0
-        task_tokens = max(100, len(task.task) // 4) if task.task else 500
-        self._router = RoutingEngine(
-            config, registry, health=self._health,
-            context_tokens=context_tokens, task_tokens=task_tokens,
-        )
+        self._router = RoutingEngine(config, registry, health=self._health)
         self._consensus = ConsensusEngine(config, registry)
         self._routing_decisions: list[RoutingDecision] = []
         self._suggestion_decisions: list[SuggestionDecision] = []

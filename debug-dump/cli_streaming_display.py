@@ -404,15 +404,6 @@ class StreamingPipelineDisplay:
         self._cancel_event = threading.Event()
         self._lock = threading.Lock()
 
-        # Output rendering: dirty flag + syntax cache
-        self._output_dirty: bool = False
-        self._last_output_flush: float = 0.0
-        self._cached_syntax: Syntax | None = None
-        self._cached_code_hash: int = 0
-
-        # Stage start times for waiting state display
-        self._stage_start_times: dict[str, float] = {}
-
         # Initialize stage states
         for stage in _STAGE_ORDER:
             self._stage_states[stage] = StageState.PENDING
@@ -499,8 +490,7 @@ class StreamingPipelineDisplay:
                 if stage_name in self._stage_models:
                     self._stage_tokens[stage_name] = chunk.token_count
 
-                # Mark output dirty — refresh handled by Live's 8fps loop
-                self._output_dirty = True
+            self._refresh()
 
         return _on_stream
 
@@ -523,7 +513,6 @@ class StreamingPipelineDisplay:
             self._current_stage = stage
             self._stage_states[stage] = StageState.ACTIVE
             self._stage_models[stage] = model
-            self._stage_start_times[stage] = time.monotonic()
             self._active_model = model
             self._active_model_stage = stage
             # Reset scroll on new stage
@@ -619,20 +608,9 @@ class StreamingPipelineDisplay:
         self._activity_log.append((elapsed, message))
 
     def _refresh(self) -> None:
-        """Update the Live display.
-
-        Output panel rebuilds are throttled to avoid re-highlighting
-        syntax on every token.  Progress, activity, and cost panels
-        are cheap and always rebuild.
-        """
+        """Update the Live display."""
         if self._live and not self._paused:
             try:
-                now = time.monotonic()
-                if self._output_dirty and (now - self._last_output_flush) >= 0.3:
-                    self._output_dirty = False
-                    self._last_output_flush = now
-                    # Invalidate syntax cache so output panel rebuilds
-                    self._cached_code_hash = 0
                 self._live.update(self._build_layout())
             except Exception:
                 pass  # Swallow rendering errors during rapid updates
@@ -748,66 +726,31 @@ class StreamingPipelineDisplay:
                         border_style=border,
                     )
 
-                # Cached syntax-highlighted rendering
+                # Normal syntax-highlighted rendering
                 try:
-                    code_hash = hash(code)
-                    if code_hash != self._cached_code_hash:
-                        self._cached_syntax = Syntax(
-                            code,
-                            language,
-                            theme="monokai",
-                            line_numbers=True,
-                            word_wrap=False,
-                        )
-                        self._cached_code_hash = code_hash
+                    syntax = Syntax(
+                        code,
+                        language,
+                        theme="monokai",
+                        line_numbers=True,
+                        word_wrap=False,
+                    )
                     title_suffix = ""
                     if self._active_buffer.current_file:
                         title_suffix = f" {self._active_buffer.current_file}"
                     return Panel(
-                        self._cached_syntax,
+                        syntax,
                         title=f"[bold]Output[/bold]{title_suffix}",
                         border_style=border,
                     )
                 except Exception:
                     pass
 
-        # Informative waiting state with model/stage info
-        return self._build_waiting_panel()
-
-    def _build_waiting_panel(self) -> Panel:
-        """Build an informative waiting-state output panel."""
-        _STAGE_HINTS = {
-            "architect": "Designing architecture and file structure...",
-            "implement": "Writing implementation code...",
-            "refactor": "Optimizing code quality and adding tests...",
-            "verify": "Reviewing for correctness and completeness...",
-        }
-
-        text = Text()
-        stage = self._current_stage
-        model = self._stage_models.get(stage, "") if stage else ""
-
-        text.append("\n\n")
-        if model:
-            text.append(f"  {model}", style="bold cyan")
-            text.append(f" — {stage}\n\n", style="dim")
-        elif stage:
-            text.append(f"  {stage}\n\n", style="bold cyan")
-
-        hint = _STAGE_HINTS.get(stage, "")
-        if hint:
-            text.append(f"  {hint}\n\n", style="italic dim")
-
-        if stage and stage in self._stage_start_times:
-            stage_elapsed = time.monotonic() - self._stage_start_times[stage]
-        else:
-            stage_elapsed = time.monotonic() - self._start_time
-
-        minutes = int(stage_elapsed // 60)
-        seconds = int(stage_elapsed % 60)
-        text.append(f"  Waiting for first tokens... {minutes}:{seconds:02d}\n", style="dim")
-
-        return Panel(text, title="[bold]Output[/bold]", border_style="dim")
+        return Panel(
+            Text("Waiting for output...", style="dim", justify="center"),
+            title="[bold]Output[/bold]",
+            border_style="dim",
+        )
 
     def _build_activity_panel(self) -> Panel:
         """Build the activity log panel."""

@@ -382,13 +382,27 @@ class TestRoutingEngine:
 
 
 class TestCostEstimation:
-    def test_estimate_stage_cost(self):
+    def test_estimate_stage_cost_no_context(self):
         config = _make_model_config(
             model="test-v1", cost_input=3.0, cost_output=15.0,
         )
-        # Architect: 50K input * $3/MTok + 8K output * $15/MTok
+        # Architect (no context): (3000 + 500 + 0 + 0) input * $3/MTok
+        #                        + 3000 output * $15/MTok
         cost = _estimate_stage_cost(config, PipelineStage.ARCHITECT)
-        expected = (50_000 / 1_000_000) * 3.0 + (8_000 / 1_000_000) * 15.0
+        expected = (3_500 / 1_000_000) * 3.0 + (3_000 / 1_000_000) * 15.0
+        assert abs(cost - expected) < 1e-10
+
+    def test_estimate_stage_cost_with_context(self):
+        config = _make_model_config(
+            model="test-v1", cost_input=3.0, cost_output=15.0,
+        )
+        # Refactor with 20K context: (3000 + 500 + 20000 + 8000) input
+        #                            + 5000 output
+        cost = _estimate_stage_cost(
+            config, PipelineStage.REFACTOR,
+            context_tokens=20_000, task_tokens=500,
+        )
+        expected = (31_500 / 1_000_000) * 3.0 + (5_000 / 1_000_000) * 15.0
         assert abs(cost - expected) < 1e-10
 
     def test_estimate_cost_returns_all_stages(self):
@@ -631,7 +645,7 @@ class TestOrchestratorRouting:
 
 class TestDiversityEnforcement:
     def test_diversity_reassigns_overused_model(self):
-        """When one model is assigned to all 4 stages, refactor/verify get reassigned."""
+        """When one model is assigned to >1 stage, later stages get reassigned."""
         registry = _make_diverse_registry()
         config = PipelineConfig(
             arbiter_mode="off",
@@ -641,14 +655,16 @@ class TestDiversityEnforcement:
         decisions = engine.select_pipeline_models()
 
         decision_map = {d.role: d for d in decisions}
-        # Premium would win all 4 stages, but diversity caps at 2
+        # Premium wins architect, but diversity (max=1) forces other stages to different models
         assert decision_map[PipelineStage.ARCHITECT].model_key == "premium"
+        # Implement: premium would win (0.90) but overused, falls to mid-tier (0.85)
         assert decision_map[PipelineStage.IMPLEMENT].model_key == "premium"
+        # Refactor/verify must not use premium (already at 1 stage by architect)
         assert decision_map[PipelineStage.REFACTOR].model_key != "premium"
         assert decision_map[PipelineStage.VERIFY].model_key != "premium"
 
-    def test_diversity_max_two_stages_per_model(self):
-        """No model should be assigned to more than 2 stages."""
+    def test_diversity_max_one_stage_per_model(self):
+        """No model should be assigned to more than 1 stage (with enough models)."""
         registry = _make_diverse_registry()
         config = PipelineConfig(
             arbiter_mode="off",
@@ -659,6 +675,8 @@ class TestDiversityEnforcement:
 
         from collections import Counter
         counts = Counter(d.model_key for d in decisions)
+        # With 3 models and 4 stages, one model must get 2 via fallback
+        # But refactor/verify are reassigned — architect keeps premium
         for model, count in counts.items():
             assert count <= 2, f"{model} assigned to {count} stages"
 
