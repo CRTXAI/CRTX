@@ -386,8 +386,42 @@ def run(
         help="Glob patterns for files to exclude",
     ),
     context_budget: int = typer.Option(
-        8000, "--context-budget",
+        20000, "--context-budget",
         help="Max tokens for injected project context",
+    ),
+    # ── Apply mode flags ──────────────────────────────────────
+    apply: bool = typer.Option(
+        False, "--apply",
+        help="Apply generated code to context-dir",
+    ),
+    confirm: bool = typer.Option(
+        True, "--confirm/--no-confirm",
+        help="Interactive confirmation before writing",
+    ),
+    branch: str = typer.Option(
+        "", "--branch",
+        help="Create a git branch for applied changes",
+    ),
+    apply_include: list[str] = typer.Option(
+        None, "--apply-include",
+        help="Glob patterns for files to include in apply",
+    ),
+    apply_exclude: list[str] = typer.Option(
+        None, "--apply-exclude",
+        help="Glob patterns for files to exclude from apply",
+    ),
+    rollback_on_fail: bool = typer.Option(
+        True, "--rollback-on-fail/--no-rollback",
+        help="Rollback changes if post-apply tests fail",
+    ),
+    test_command: str = typer.Option(
+        "", "--test-command",
+        help="Test command to run after apply",
+    ),
+    # ── Streaming flags ───────────────────────────────────────
+    no_stream: bool = typer.Option(
+        False, "--no-stream",
+        help="Disable streaming pipeline display",
     ),
 ) -> None:
     """Execute a pipeline run with the specified task and options."""
@@ -397,6 +431,13 @@ def run(
         console.print(
             "[red]No API keys configured.[/red] "
             "Run [bold]triad setup[/bold] to get started."
+        )
+        raise typer.Exit(1) from None
+
+    # Validate --apply requires --context-dir
+    if apply and not context_dir:
+        console.print(
+            "[red]Error:[/red] --apply requires --context-dir"
         )
         raise typer.Exit(1) from None
 
@@ -502,21 +543,51 @@ def run(
     interactive = is_interactive()
     emitter = PipelineEventEmitter()
 
-    if interactive:
-        display = PipelineDisplay(console, mode, route, arbiter)
-        emitter.add_listener(display.create_listener())
-        with display:
-            pipeline_result = asyncio.run(
-                run_pipeline(task_spec, config, registry, emitter),
-            )
-    else:
-        # Non-interactive: show static task panel + spinner
-        _display_task_panel(task_spec, config)
-        console.print()
-        with console.status("[bold blue]Running pipeline...", spinner="dots"):
-            pipeline_result = asyncio.run(
-                run_pipeline(task_spec, config, registry, emitter),
-            )
+    # Streaming display selection
+    use_streaming = (
+        interactive
+        and pipeline_mode == PipelineMode.SEQUENTIAL
+        and not no_stream
+        and console.width >= 80
+        and console.height >= 24
+    )
+
+    stream_callback = None
+
+    if use_streaming:
+        try:
+            from triad.cli_streaming_display import StreamingPipelineDisplay
+
+            streaming_display = StreamingPipelineDisplay(console, mode, route, arbiter)
+            emitter.add_listener(streaming_display.create_listener())
+            stream_callback = streaming_display.create_stream_callback()
+            with streaming_display:
+                pipeline_result = asyncio.run(
+                    run_pipeline(
+                        task_spec, config, registry, emitter,
+                        stream_callback=stream_callback,
+                    ),
+                )
+        except ImportError:
+            # Fall back to standard display if streaming module not available
+            use_streaming = False
+
+    if not use_streaming:
+        if interactive:
+            display = PipelineDisplay(console, mode, route, arbiter)
+            emitter.add_listener(display.create_listener())
+            with display:
+                pipeline_result = asyncio.run(
+                    run_pipeline(task_spec, config, registry, emitter),
+                )
+        else:
+            # Non-interactive: show static task panel + spinner
+            _display_task_panel(task_spec, config)
+            console.print()
+            with console.status("[bold blue]Running pipeline...", spinner="dots"):
+                pipeline_result = asyncio.run(
+                    run_pipeline(task_spec, config, registry, emitter),
+                )
 
     # Display results
     console.print()
@@ -525,12 +596,32 @@ def run(
     # Write output files
     from triad.output.writer import write_pipeline_output
 
-    write_pipeline_output(pipeline_result, output_dir)
-    console.print(f"\n[dim]Output written to:[/dim] {output_dir}/")
+    actual_path = write_pipeline_output(pipeline_result, output_dir)
+    console.print(f"\n[dim]Output written to:[/dim] {actual_path}/")
+
+    # Apply mode
+    if apply:
+        from triad.apply.engine import ApplyEngine
+        from triad.schemas.apply import ApplyConfig
+
+        apply_config = ApplyConfig(
+            enabled=True,
+            confirm=confirm,
+            branch=branch,
+            apply_include=apply_include or [],
+            apply_exclude=apply_exclude or [],
+            rollback_on_fail=rollback_on_fail,
+            test_command=test_command,
+        )
+        engine = ApplyEngine(
+            pipeline_result, apply_config, context_dir, console, interactive,
+        )
+        apply_result = engine.run()
+        _display_apply_result(apply_result)
 
     # Interactive completion summary (only in real terminals)
     if interactive:
-        summary = CompletionSummary(console, pipeline_result, output_dir)
+        summary = CompletionSummary(console, pipeline_result, actual_path)
         action = summary.show()
         if action == "rerun":
             run(
@@ -539,6 +630,10 @@ def run(
                 timeout=timeout, max_retries=max_retries, no_persist=no_persist,
                 output_dir=output_dir, context_dir=context_dir, include=include,
                 exclude=exclude, context_budget=context_budget,
+                apply=apply, confirm=confirm, branch=branch,
+                apply_include=apply_include, apply_exclude=apply_exclude,
+                rollback_on_fail=rollback_on_fail, test_command=test_command,
+                no_stream=no_stream,
             )
 
 
@@ -558,6 +653,21 @@ def _display_task_panel(task_spec: TaskSpec, config: PipelineConfig) -> None:
         info.append("  +reconcile", style="dim")
 
     console.print(Panel(info, title="[bold blue]Triad Pipeline[/bold blue]", border_style="blue"))
+
+
+def _display_name_from_litellm_id(litellm_id: str) -> str:
+    """Resolve a LiteLLM model ID to a human-friendly display name.
+
+    Falls back to the raw ID if the model is not found in the registry.
+    """
+    try:
+        registry = _load_registry()
+        for cfg in registry.values():
+            if cfg.model == litellm_id:
+                return cfg.display_name
+    except Exception:
+        pass
+    return litellm_id
 
 
 def _display_result(result) -> None:
@@ -594,7 +704,7 @@ def _display_result(result) -> None:
             table.add_row(
                 review.stage_reviewed.value,
                 Text(review.verdict.value.upper(), style=style),
-                review.arbiter_model,
+                _display_name_from_litellm_id(review.arbiter_model),
                 f"{review.confidence:.2f}",
                 f"${review.token_cost:.4f}",
             )
@@ -607,7 +717,7 @@ def _display_result(result) -> None:
         fb_table.add_column("Stage", style="cyan")
         fb_table.add_column("Original")
         fb_table.add_column("Fallback")
-        fb_table.add_column("Reason", style="dim")
+        fb_table.add_column("Reason", style="dim", no_wrap=False, max_width=30)
 
         for fb in result.model_fallbacks:
             orig = fb.get("original", "?")
@@ -619,7 +729,7 @@ def _display_result(result) -> None:
                 fb.get("stage", "?"),
                 f"{orig} (fitness {orig_fit:.2f})",
                 f"{fallback} (fitness {fallback_fit:.2f})",
-                reason[:60],
+                reason,
             )
         console.print(fb_table)
         console.print()
@@ -655,6 +765,38 @@ def _display_result(result) -> None:
         "[bold]Session:[/bold]", result.session_id or "n/a",
     )
     console.print(Panel(summary, title="[bold]Summary[/bold]"))
+
+
+def _display_apply_result(result) -> None:
+    """Display the result of an apply operation."""
+    from triad.schemas.apply import ApplyResult
+
+    if result.errors:
+        for err in result.errors:
+            console.print(f"  [red]Error:[/red] {err}")
+
+    if result.files_applied:
+        table = Table(title="Applied Files")
+        table.add_column("Action", width=8)
+        table.add_column("File", style="cyan")
+        for f in result.files_applied:
+            action_text = (
+                Text("+ NEW", style="bold green")
+                if f.action.value == "create"
+                else Text("* MOD", style="bold yellow")
+            )
+            table.add_row(action_text, f.source_filepath)
+        console.print(table)
+
+    if result.commit_sha:
+        console.print(f"  [green]Commit:[/green] {result.commit_sha[:12]}")
+
+    if result.test_passed is True:
+        console.print("  [green]Tests: PASSED[/green]")
+    elif result.test_passed is False:
+        console.print("  [red]Tests: FAILED[/red]")
+        if result.rolled_back:
+            console.print("  [yellow]Changes rolled back[/yellow]")
 
 
 # ── triad plan ───────────────────────────────────────────────────
@@ -908,8 +1050,8 @@ def _run_from_plan(result, registry, mode_str: str, route_str: str) -> None:
     from triad.output.writer import write_pipeline_output
 
     output_dir = task_spec.output_dir or "triad-output"
-    write_pipeline_output(pipeline_result, output_dir)
-    console.print(f"\n[dim]Output written to:[/dim] {output_dir}/")
+    actual_path = write_pipeline_output(pipeline_result, output_dir)
+    console.print(f"\n[dim]Output written to:[/dim] {actual_path}/")
 
 
 # ── triad estimate ───────────────────────────────────────────────
@@ -1339,7 +1481,7 @@ def sessions_show(
             review_table.add_row(
                 r.stage_reviewed.value,
                 Text(r.verdict.value.upper(), style=style),
-                r.arbiter_model,
+                _display_name_from_litellm_id(r.arbiter_model),
                 f"{r.confidence:.2f}",
                 str(len(r.issues)),
             )

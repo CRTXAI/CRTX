@@ -10,6 +10,19 @@ from __future__ import annotations
 from triad.schemas.pipeline import PipelineResult
 
 
+def _display_name_from_litellm_id(litellm_id: str) -> str:
+    """Resolve a LiteLLM model ID to a human-friendly display name."""
+    try:
+        from triad.providers.registry import load_models
+        registry = load_models()
+        for cfg in registry.values():
+            if cfg.model == litellm_id:
+                return cfg.display_name
+    except Exception:
+        pass
+    return litellm_id
+
+
 def render_summary(result: PipelineResult) -> str:
     """Produce a Markdown summary report from a PipelineResult.
 
@@ -77,7 +90,7 @@ def render_summary(result: PipelineResult) -> str:
         for stage, msg in result.stages.items():
             lines.append(f"### {stage.value.title()}")
             lines.append("")
-            lines.append(f"- **Model:** {msg.model}")
+            lines.append(f"- **Model:** {_display_name_from_litellm_id(msg.model)}")
             lines.append(f"- **Confidence:** {msg.confidence:.2f}")
             if msg.token_usage:
                 total_tokens = msg.token_usage.prompt_tokens + msg.token_usage.completion_tokens
@@ -105,7 +118,7 @@ def render_summary(result: PipelineResult) -> str:
             lines.append(
                 f"| {r.stage_reviewed.value} | "
                 f"{r.verdict.value.upper()} | "
-                f"{r.arbiter_model} | "
+                f"{_display_name_from_litellm_id(r.arbiter_model)} | "
                 f"{r.confidence:.2f} | "
                 f"${r.token_cost:.4f} |"
             )
