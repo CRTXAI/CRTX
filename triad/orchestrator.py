@@ -119,10 +119,12 @@ class PipelineOrchestrator:
         task: TaskSpec,
         config: PipelineConfig,
         registry: dict[str, ModelConfig],
+        event_emitter: object | None = None,
     ) -> None:
         self._task = task
         self._config = config
         self._registry = registry
+        self._emitter = event_emitter
         self._session: list[AgentMessage] = []
         self._arbiter = ArbiterEngine(config, registry)
         self._reconciler = ReconciliationEngine(config, registry)
@@ -131,6 +133,11 @@ class PipelineOrchestrator:
         self._routing_decisions: list[RoutingDecision] = []
         self._suggestion_decisions: list[SuggestionDecision] = []
         self._stage_models: dict[PipelineStage, str] = {}
+
+    async def _emit(self, event_type: str, **data: object) -> None:
+        """Emit a dashboard event if an emitter is attached."""
+        if self._emitter is not None:
+            await self._emitter.emit(event_type, **data)
 
     @property
     def session(self) -> list[AgentMessage]:
@@ -164,8 +171,21 @@ class PipelineOrchestrator:
             self._config.arbiter_mode, set()
         )
 
+        await self._emit(
+            "pipeline_started",
+            mode=self._config.pipeline_mode.value,
+            task_summary=self._task.task[:200],
+            models=list(self._registry.keys()),
+        )
+
         for stage in _STAGE_SEQUENCE:
             logger.info("Starting stage: %s", stage.value)
+
+            stage_start = time.monotonic()
+            model_key = self._stage_models.get(stage, "")
+            await self._emit(
+                "stage_started", stage=stage.value, model=model_key,
+            )
 
             template_vars = self._build_template_vars(
                 stage=stage,
@@ -185,6 +205,18 @@ class PipelineOrchestrator:
             if stage == PipelineStage.ARCHITECT:
                 architect_output = msg.content
 
+            stage_duration = time.monotonic() - stage_start
+            stage_cost = msg.token_usage.cost if msg.token_usage else 0.0
+            await self._emit(
+                "stage_completed",
+                stage=stage.value,
+                model=msg.model,
+                duration=stage_duration,
+                cost=stage_cost,
+                confidence=msg.confidence,
+                content_preview=msg.content[:200],
+            )
+
             logger.info(
                 "Completed stage %s (model=%s, confidence=%.2f)",
                 stage.value,
@@ -202,6 +234,13 @@ class PipelineOrchestrator:
 
             # --- Arbiter review ---
             if stage in reviewed_stages:
+                await self._emit(
+                    "arbiter_started",
+                    stage=stage.value,
+                    arbiter_model=self._arbiter.get_arbiter_model(stage, msg.model)
+                    if hasattr(self._arbiter, "get_arbiter_model")
+                    else "arbiter",
+                )
                 review = await self._arbiter.review(
                     stage=stage,
                     stage_model=msg.model,
@@ -210,6 +249,14 @@ class PipelineOrchestrator:
                     architect_output=architect_output,
                 )
                 arbiter_reviews.append(review)
+                await self._emit(
+                    "arbiter_verdict",
+                    stage=stage.value,
+                    verdict=review.verdict.value,
+                    confidence=review.confidence,
+                    issues_count=len(review.issues),
+                    reasoning_preview=review.reasoning[:200],
+                )
 
                 if review.verdict == Verdict.HALT:
                     halted = True
@@ -217,9 +264,21 @@ class PipelineOrchestrator:
                     logger.warning(
                         "HALT verdict for %s — stopping pipeline", stage.value
                     )
+                    await self._emit(
+                        "pipeline_halted",
+                        stage=stage.value,
+                        reason=halt_reason[:200],
+                        arbiter_model=review.arbiter_model,
+                    )
                     break
 
                 if review.verdict == Verdict.REJECT:
+                    await self._emit(
+                        "retry_triggered",
+                        stage=stage.value,
+                        retry_number=1,
+                        reason=review.reasoning[:200],
+                    )
                     msg, retry_reviews = await self._retry_stage(
                         stage=stage,
                         review=review,
@@ -279,6 +338,16 @@ class PipelineOrchestrator:
             for msg in stages.values()
             if msg.token_usage
         )
+
+        if not halted:
+            await self._emit(
+                "pipeline_completed",
+                success=True,
+                total_cost=total_cost,
+                total_tokens=total_tokens,
+                duration=duration,
+                session_id="",
+            )
 
         return PipelineResult(
             task=self._task,
@@ -620,12 +689,19 @@ class ParallelOrchestrator:
         task: TaskSpec,
         config: PipelineConfig,
         registry: dict[str, ModelConfig],
+        event_emitter: object | None = None,
     ) -> None:
         self._task = task
         self._config = config
         self._registry = registry
+        self._emitter = event_emitter
         self._arbiter = ArbiterEngine(config, registry)
         self._consensus = ConsensusEngine(config, registry)
+
+    async def _emit(self, event_type: str, **data: object) -> None:
+        """Emit a dashboard event if an emitter is attached."""
+        if self._emitter is not None:
+            await self._emitter.emit(event_type, **data)
 
     async def run(self) -> PipelineResult:
         """Execute the parallel exploration pipeline."""
@@ -836,12 +912,19 @@ class DebateOrchestrator:
         task: TaskSpec,
         config: PipelineConfig,
         registry: dict[str, ModelConfig],
+        event_emitter: object | None = None,
     ) -> None:
         self._task = task
         self._config = config
         self._registry = registry
+        self._emitter = event_emitter
         self._arbiter = ArbiterEngine(config, registry)
         self._consensus = ConsensusEngine(config, registry)
+
+    async def _emit(self, event_type: str, **data: object) -> None:
+        """Emit a dashboard event if an emitter is attached."""
+        if self._emitter is not None:
+            await self._emitter.emit(event_type, **data)
 
     async def run(self) -> PipelineResult:
         """Execute the debate pipeline."""
@@ -1085,6 +1168,7 @@ async def run_pipeline(
     task: TaskSpec,
     config: PipelineConfig,
     registry: dict[str, ModelConfig],
+    event_emitter: object | None = None,
 ) -> PipelineResult:
     """Dispatch to the appropriate pipeline mode and return a result.
 
@@ -1093,6 +1177,12 @@ async def run_pipeline(
     injection is enabled (context_dir set), scans the project and injects
     context into the task. When session persistence is enabled, saves the
     run to SQLite.
+
+    Args:
+        task: The task specification.
+        config: Pipeline configuration.
+        registry: Model registry.
+        event_emitter: Optional dashboard event emitter for real-time updates.
     """
     session_id = str(uuid.uuid4())
     started_at = datetime.now(UTC)
@@ -1102,11 +1192,17 @@ async def run_pipeline(
         task = _inject_context(task, config)
 
     if config.pipeline_mode == PipelineMode.PARALLEL:
-        result = await ParallelOrchestrator(task, config, registry).run()
+        result = await ParallelOrchestrator(
+            task, config, registry, event_emitter,
+        ).run()
     elif config.pipeline_mode == PipelineMode.DEBATE:
-        result = await DebateOrchestrator(task, config, registry).run()
+        result = await DebateOrchestrator(
+            task, config, registry, event_emitter,
+        ).run()
     else:
-        result = await PipelineOrchestrator(task, config, registry).run()
+        result = await PipelineOrchestrator(
+            task, config, registry, event_emitter,
+        ).run()
 
     result.session_id = session_id
 

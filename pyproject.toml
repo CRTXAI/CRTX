@@ -31,6 +31,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+dashboard = [
+    "fastapi>=0.110",
+    "uvicorn>=0.30",
+    "websockets>=12.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",

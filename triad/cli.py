@@ -1243,6 +1243,58 @@ def review(
         raise typer.Exit(exit_code) from None
 
 
+# ── Dashboard ────────────────────────────────────────────────────
+
+
+@app.command()
+def dashboard(
+    port: int = typer.Option(
+        8420, "--port", "-p",
+        help="Port to serve the dashboard on",
+    ),
+    no_browser: bool = typer.Option(
+        False, "--no-browser",
+        help="Don't auto-open browser",
+    ),
+) -> None:
+    """Start the real-time pipeline dashboard server.
+
+    Opens a browser with a live visualization of pipeline runs.
+    Run `triad run --task "..."` in another terminal to see agents work.
+
+    Requires: pip install triad-orchestrator[dashboard]
+    """
+    try:
+        from triad.dashboard.server import create_app  # noqa: F811
+    except ImportError:
+        console.print(
+            "[red]Dashboard requires extra dependencies.[/red]\n"
+            "Install with: [bold]pip install triad-orchestrator\\[dashboard][/bold]"
+        )
+        raise typer.Exit(1) from None
+
+    console.print(Panel(
+        f"[bold]URL:[/bold] http://localhost:{port}\n"
+        f"[bold]Auto-open:[/bold] {'no' if no_browser else 'yes'}",
+        title="[bold blue]Triad Dashboard[/bold blue]",
+        border_style="blue",
+    ))
+    console.print(
+        "[dim]Run [bold]triad run --task \"...\"[/bold] in another terminal "
+        "to see real-time pipeline events.[/dim]"
+    )
+
+    if not no_browser:
+        import threading
+        import webbrowser
+        threading.Timer(1.5, lambda: webbrowser.open(f"http://localhost:{port}")).start()
+
+    import uvicorn
+
+    app_instance = create_app()
+    uvicorn.run(app_instance, host="0.0.0.0", port=port, log_level="warning")
+
+
 # ── Entry point ──────────────────────────────────────────────────
 
 if __name__ == "__main__":

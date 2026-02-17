@@ -1,0 +1,1001 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Triad Orchestrator — Dashboard</title>
+  <style>
+    /* ══ Brand Palette ══════════════════════════════════════════ */
+    :root {
+      --bg-primary: #050805;
+      --bg-card: #0d120d;
+      --bg-code: #080c08;
+      --bg-input: #0e130e;
+      --bg-hover: #0f150f;
+      --border: #1a2a1a;
+      --border-light: #243024;
+      --border-focus: #00ff8840;
+      --green: #00ff88;
+      --green-dim: #00aa55;
+      --gemini: #66ff88;
+      --gpt: #00ff66;
+      --claude: #00ffbb;
+      --grok: #D4A843;
+      --arbiter-gold: #D4A843;
+      --arbiter-glow: #D4A84330;
+      --verdict-approve: #00ff88;
+      --verdict-flag: #ffaa00;
+      --verdict-reject: #ff4444;
+      --verdict-halt: #ff4444;
+      --text-primary: #e0ffe0;
+      --text-dim: #6a8a6a;
+      --text-muted: #354535;
+      --text-white: #ffffff;
+      --status-active: #ffaa00;
+      --status-complete: #00ff88;
+      --status-pending: #354535;
+      --status-error: #ff4444;
+      --event-stage: #00ff88;
+      --event-arbiter: #D4A843;
+      --event-error: #ff4444;
+      --event-info: #6a8a6a;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+    }
+
+    code, pre, .mono {
+      font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+    }
+
+    /* ══ Layout ═════════════════════════════════════════════════ */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-card);
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text-white);
+      letter-spacing: -0.3px;
+    }
+
+    .header h1 span {
+      color: var(--green);
+    }
+
+    .connection-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text-dim);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--verdict-reject);
+    }
+
+    .status-dot.connected {
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+    }
+
+    .tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-card);
+    }
+
+    .tab {
+      padding: 10px 20px;
+      font-size: 13px;
+      color: var(--text-dim);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+    }
+
+    .tab:hover { color: var(--text-primary); }
+    .tab.active {
+      color: var(--green);
+      border-bottom-color: var(--green);
+    }
+
+    .main {
+      display: flex;
+      height: calc(100vh - 105px);
+    }
+
+    .content { flex: 1; overflow-y: auto; padding: 24px; }
+
+    .sidebar {
+      width: 360px;
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-card);
+    }
+
+    .sidebar-header {
+      padding: 14px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-white);
+      border-bottom: 1px solid var(--border);
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .sidebar-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+
+    /* ══ Pipeline View ══════════════════════════════════════════ */
+    .metrics-bar {
+      display: flex;
+      gap: 24px;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+    }
+
+    .metric {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .metric-label {
+      font-size: 11px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .metric-value {
+      font-size: 20px;
+      font-weight: 600;
+      color: var(--green);
+    }
+
+    .metric-value.cost { color: var(--green); }
+    .metric-value.duration { color: var(--text-dim); }
+    .metric-value.duration.done { color: var(--green); }
+
+    .pipeline-flow {
+      display: flex;
+      align-items: flex-start;
+      gap: 0;
+      margin-bottom: 32px;
+      flex-wrap: wrap;
+    }
+
+    .stage-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      width: 180px;
+      position: relative;
+      transition: border-color 0.3s;
+    }
+
+    .stage-card.active {
+      border-color: var(--status-active);
+      box-shadow: 0 0 12px #ffaa0020;
+    }
+
+    .stage-card.complete {
+      border-color: var(--status-complete);
+    }
+
+    .stage-card.error {
+      border-color: var(--status-error);
+    }
+
+    .stage-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-white);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .stage-model {
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+    }
+
+    .stage-status {
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      display: inline-block;
+    }
+
+    .stage-status.pending {
+      background: var(--status-pending);
+      color: var(--text-dim);
+    }
+
+    .stage-status.active {
+      background: #ffaa0020;
+      color: var(--status-active);
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    .stage-status.complete {
+      background: #00ff8815;
+      color: var(--status-complete);
+    }
+
+    .stage-status.error {
+      background: #ff444420;
+      color: var(--status-error);
+    }
+
+    .stage-meta {
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    .flow-arrow {
+      display: flex;
+      align-items: center;
+      padding: 0 8px;
+      color: var(--border-light);
+      font-size: 20px;
+      margin-top: 20px;
+    }
+
+    /* ══ Arbiter Card ═══════════════════════════════════════════ */
+    .arbiter-section {
+      margin-bottom: 24px;
+    }
+
+    .arbiter-section h3 {
+      font-size: 13px;
+      color: var(--arbiter-gold);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+    }
+
+    .verdict-badges {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .verdict-badge {
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid;
+    }
+
+    .verdict-badge.approve {
+      color: var(--verdict-approve);
+      border-color: var(--verdict-approve);
+      background: #00ff8810;
+    }
+
+    .verdict-badge.flag {
+      color: var(--verdict-flag);
+      border-color: var(--verdict-flag);
+      background: #ffaa0010;
+    }
+
+    .verdict-badge.reject {
+      color: var(--verdict-reject);
+      border-color: var(--verdict-reject);
+      background: #ff444410;
+    }
+
+    .verdict-badge.halt {
+      color: var(--verdict-halt);
+      border-color: var(--verdict-halt);
+      background: #ff444420;
+      box-shadow: 0 0 12px #ff444430;
+    }
+
+    /* ══ Activity Feed ══════════════════════════════════════════ */
+    .event-item {
+      padding: 8px 12px;
+      border-radius: 6px;
+      margin-bottom: 4px;
+      font-size: 12px;
+      transition: background 0.15s;
+    }
+
+    .event-item:hover { background: var(--bg-hover); }
+
+    .event-time {
+      color: var(--text-muted);
+      margin-right: 8px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+    }
+
+    .event-icon { margin-right: 6px; }
+
+    .event-text.stage { color: var(--event-stage); }
+    .event-text.arbiter { color: var(--event-arbiter); }
+    .event-text.error { color: var(--event-error); }
+    .event-text.info { color: var(--event-info); }
+
+    /* ══ Sessions Table ═════════════════════════════════════════ */
+    .sessions-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .sessions-table th {
+      text-align: left;
+      padding: 10px 12px;
+      color: var(--text-dim);
+      font-weight: 600;
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .sessions-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text-primary);
+    }
+
+    .sessions-table tr:hover td { background: var(--bg-hover); }
+
+    .badge-success {
+      color: var(--status-complete);
+      font-size: 12px;
+    }
+
+    .badge-fail {
+      color: var(--status-error);
+      font-size: 12px;
+    }
+
+    /* ══ Message Viewer Modal ═══════════════════════════════════ */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+
+    .modal {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      width: 80vw;
+      max-width: 900px;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .modal-header h3 {
+      font-size: 15px;
+      color: var(--text-white);
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      font-size: 18px;
+      cursor: pointer;
+    }
+
+    .modal-close:hover { color: var(--text-primary); }
+
+    .modal-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+    }
+
+    .modal-body pre {
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 16px;
+      color: var(--text-primary);
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* ══ Helpers ═════════════════════════════════════════════════ */
+    .model-color-gemini { color: var(--gemini); }
+    .model-color-gpt { color: var(--gpt); }
+    .model-color-claude { color: var(--claude); }
+    .model-color-grok { color: var(--grok); }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 300px;
+      color: var(--text-muted);
+      font-size: 14px;
+      gap: 8px;
+    }
+
+    .empty-state .icon { font-size: 32px; opacity: 0.4; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    /* ══ Responsive ═════════════════════════════════════════════ */
+    @media (max-width: 900px) {
+      .main { flex-direction: column; }
+      .sidebar { width: 100%; max-height: 300px; border-left: none; border-top: 1px solid var(--border); }
+      .pipeline-flow { gap: 8px; }
+      .stage-card { width: 140px; padding: 12px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    // ── Model color mapping ────────────────────────────────────
+    function getModelColor(modelKey) {
+      const k = (modelKey || '').toLowerCase();
+      if (k.includes('gemini') || k.includes('google')) return 'var(--gemini)';
+      if (k.includes('gpt') || k.includes('openai') || k.includes('o3') || k.includes('o1')) return 'var(--gpt)';
+      if (k.includes('claude') || k.includes('anthropic')) return 'var(--claude)';
+      if (k.includes('grok') || k.includes('xai')) return 'var(--grok)';
+      return 'var(--green)';
+    }
+
+    function getModelColorClass(modelKey) {
+      const k = (modelKey || '').toLowerCase();
+      if (k.includes('gemini') || k.includes('google')) return 'model-color-gemini';
+      if (k.includes('gpt') || k.includes('openai')) return 'model-color-gpt';
+      if (k.includes('claude') || k.includes('anthropic')) return 'model-color-claude';
+      if (k.includes('grok') || k.includes('xai')) return 'model-color-grok';
+      return '';
+    }
+
+    // ── Time formatting ────────────────────────────────────────
+    function formatTime(ts) {
+      const d = new Date(ts * 1000);
+      return d.toLocaleTimeString('en-US', { hour12: false });
+    }
+
+    function formatDuration(s) {
+      if (s < 60) return s.toFixed(1) + 's';
+      const m = Math.floor(s / 60);
+      return m + 'm ' + (s % 60).toFixed(0) + 's';
+    }
+
+    // ── App ────────────────────────────────────────────────────
+    function App() {
+      const [connected, setConnected] = useState(false);
+      const [events, setEvents] = useState([]);
+      const [activeTab, setActiveTab] = useState('pipeline');
+      const [sessions, setSessions] = useState([]);
+      const [modalContent, setModalContent] = useState(null);
+      const wsRef = useRef(null);
+      const reconnectRef = useRef(null);
+
+      // Pipeline state derived from events
+      const [pipelineState, setPipelineState] = useState({
+        running: false,
+        completed: false,
+        stages: {},
+        verdicts: [],
+        cost: 0,
+        duration: 0,
+        mode: '',
+        models: [],
+        sessionId: '',
+      });
+
+      // Derive pipeline state from events
+      const processEvent = useCallback((event) => {
+        setEvents(prev => [...prev, event]);
+
+        setPipelineState(prev => {
+          const next = { ...prev };
+          const d = event.data || {};
+
+          switch (event.type) {
+            case 'pipeline_started':
+              return {
+                ...next,
+                running: true,
+                completed: false,
+                stages: {},
+                verdicts: [],
+                cost: 0,
+                duration: 0,
+                mode: d.mode || '',
+                models: d.models || [],
+                sessionId: d.session_id || '',
+              };
+            case 'stage_started':
+              next.stages = {
+                ...next.stages,
+                [d.stage]: { status: 'active', model: d.model, startTime: event.timestamp },
+              };
+              break;
+            case 'stage_completed':
+              next.stages = {
+                ...next.stages,
+                [d.stage]: {
+                  ...(next.stages[d.stage] || {}),
+                  status: 'complete',
+                  model: d.model,
+                  duration: d.duration,
+                  cost: d.cost,
+                  confidence: d.confidence,
+                  preview: d.content_preview,
+                },
+              };
+              next.cost = (next.cost || 0) + (d.cost || 0);
+              break;
+            case 'arbiter_verdict':
+              next.verdicts = [...(next.verdicts || []), {
+                stage: d.stage,
+                verdict: d.verdict,
+                confidence: d.confidence,
+                issues: d.issues_count,
+              }];
+              break;
+            case 'pipeline_completed':
+              next.running = false;
+              next.completed = true;
+              next.cost = d.total_cost || next.cost;
+              next.duration = d.duration || 0;
+              next.sessionId = d.session_id || next.sessionId;
+              break;
+            case 'pipeline_halted':
+              next.running = false;
+              next.completed = true;
+              break;
+            case 'error':
+              if (d.stage && next.stages[d.stage]) {
+                next.stages = {
+                  ...next.stages,
+                  [d.stage]: { ...next.stages[d.stage], status: 'error' },
+                };
+              }
+              break;
+          }
+          return next;
+        });
+      }, []);
+
+      // WebSocket connection with auto-reconnect
+      const connect = useCallback(() => {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+        const ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          setConnected(true);
+          if (reconnectRef.current) {
+            clearTimeout(reconnectRef.current);
+            reconnectRef.current = null;
+          }
+        };
+
+        ws.onmessage = (e) => {
+          try {
+            const event = JSON.parse(e.data);
+            processEvent(event);
+          } catch (err) {
+            console.error('Failed to parse event:', err);
+          }
+        };
+
+        ws.onclose = () => {
+          setConnected(false);
+          reconnectRef.current = setTimeout(connect, 3000);
+        };
+
+        ws.onerror = () => {
+          ws.close();
+        };
+      }, [processEvent]);
+
+      useEffect(() => {
+        connect();
+        return () => {
+          if (wsRef.current) wsRef.current.close();
+          if (reconnectRef.current) clearTimeout(reconnectRef.current);
+        };
+      }, [connect]);
+
+      // Fetch sessions when tab changes
+      useEffect(() => {
+        if (activeTab === 'sessions') {
+          fetch('/api/sessions')
+            .then(r => r.json())
+            .then(data => setSessions(data))
+            .catch(() => {});
+        }
+      }, [activeTab]);
+
+      // Timer for running duration
+      const [elapsed, setElapsed] = useState(0);
+      useEffect(() => {
+        if (!pipelineState.running) return;
+        const startEvents = events.filter(e => e.type === 'pipeline_started');
+        if (startEvents.length === 0) return;
+        const startTs = startEvents[startEvents.length - 1].timestamp;
+        const interval = setInterval(() => {
+          setElapsed(Date.now() / 1000 - startTs);
+        }, 100);
+        return () => clearInterval(interval);
+      }, [pipelineState.running, events]);
+
+      const stageOrder = ['architect', 'implement', 'refactor', 'verify'];
+
+      return (
+        <div>
+          {/* Header */}
+          <div className="header">
+            <div className="header-left">
+              <h1><span>Triad</span> Orchestrator</h1>
+            </div>
+            <div className="connection-status">
+              <span className={`status-dot ${connected ? 'connected' : ''}`}></span>
+              {connected ? 'Connected' : 'Disconnected'}
+            </div>
+          </div>
+
+          {/* Tabs */}
+          <div className="tabs">
+            <div className={`tab ${activeTab === 'pipeline' ? 'active' : ''}`}
+                 onClick={() => setActiveTab('pipeline')}>Pipeline</div>
+            <div className={`tab ${activeTab === 'sessions' ? 'active' : ''}`}
+                 onClick={() => setActiveTab('sessions')}>Sessions</div>
+          </div>
+
+          {/* Main */}
+          <div className="main">
+            <div className="content">
+              {activeTab === 'pipeline' && (
+                <PipelineView
+                  state={pipelineState}
+                  elapsed={elapsed}
+                  stageOrder={stageOrder}
+                  onStageClick={(stage) => {
+                    const s = pipelineState.stages[stage];
+                    if (s && s.preview) setModalContent({ title: stage.toUpperCase(), content: s.preview });
+                  }}
+                />
+              )}
+              {activeTab === 'sessions' && (
+                <SessionsView sessions={sessions} />
+              )}
+            </div>
+
+            {/* Activity Feed Sidebar */}
+            <div className="sidebar">
+              <div className="sidebar-header">Activity Feed</div>
+              <div className="sidebar-body">
+                <EventFeed events={events} />
+              </div>
+            </div>
+          </div>
+
+          {/* Modal */}
+          {modalContent && (
+            <div className="modal-overlay" onClick={() => setModalContent(null)}>
+              <div className="modal" onClick={e => e.stopPropagation()}>
+                <div className="modal-header">
+                  <h3>{modalContent.title}</h3>
+                  <button className="modal-close" onClick={() => setModalContent(null)}>&#x2715;</button>
+                </div>
+                <div className="modal-body">
+                  <pre>{modalContent.content}</pre>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ── Pipeline View ──────────────────────────────────────────
+    function PipelineView({ state, elapsed, stageOrder, onStageClick }) {
+      const displayDuration = state.completed ? state.duration : elapsed;
+
+      return (
+        <div>
+          {/* Metrics */}
+          <div className="metrics-bar">
+            <div className="metric">
+              <span className="metric-label">Cost</span>
+              <span className="metric-value cost">${(state.cost || 0).toFixed(4)}</span>
+            </div>
+            <div className="metric">
+              <span className="metric-label">Duration</span>
+              <span className={`metric-value duration ${state.completed ? 'done' : ''}`}>
+                {state.running || state.completed ? formatDuration(displayDuration) : '--'}
+              </span>
+            </div>
+            <div className="metric">
+              <span className="metric-label">Mode</span>
+              <span className="metric-value" style={{fontSize: 16, color: 'var(--text-primary)'}}>
+                {state.mode || 'sequential'}
+              </span>
+            </div>
+            <div className="metric">
+              <span className="metric-label">Status</span>
+              <span className="metric-value" style={{
+                fontSize: 16,
+                color: state.running ? 'var(--status-active)' :
+                       state.completed ? 'var(--status-complete)' : 'var(--text-muted)'
+              }}>
+                {state.running ? 'Running' : state.completed ? 'Complete' : 'Idle'}
+              </span>
+            </div>
+          </div>
+
+          {/* Pipeline Stage Cards */}
+          <div className="pipeline-flow">
+            {stageOrder.map((stage, i) => {
+              const s = state.stages[stage] || {};
+              const status = s.status || 'pending';
+              return (
+                <React.Fragment key={stage}>
+                  {i > 0 && <div className="flow-arrow">&#x2192;</div>}
+                  <div
+                    className={`stage-card ${status}`}
+                    style={{cursor: s.preview ? 'pointer' : 'default'}}
+                    onClick={() => onStageClick(stage)}
+                  >
+                    <div className="stage-name">{stage}</div>
+                    <div className="stage-model" style={{color: getModelColor(s.model)}}>
+                      {s.model || 'unassigned'}
+                    </div>
+                    <span className={`stage-status ${status}`}>
+                      {status === 'active' ? 'Working...' :
+                       status === 'complete' ? '\u2713 Done' :
+                       status === 'error' ? '\u2717 Error' : 'Pending'}
+                    </span>
+                    {s.duration != null && (
+                      <div className="stage-meta">
+                        {s.duration.toFixed(1)}s &middot; ${(s.cost || 0).toFixed(4)}
+                      </div>
+                    )}
+                  </div>
+                </React.Fragment>
+              );
+            })}
+          </div>
+
+          {/* Arbiter Verdicts */}
+          {state.verdicts && state.verdicts.length > 0 && (
+            <div className="arbiter-section">
+              <h3>&#x2696; Arbiter Verdicts</h3>
+              <div className="verdict-badges">
+                {state.verdicts.map((v, i) => (
+                  <span key={i} className={`verdict-badge ${v.verdict.toLowerCase()}`}>
+                    {v.stage.toUpperCase()}: {v.verdict.toUpperCase()}
+                    {v.issues > 0 && ` (${v.issues} issues)`}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Empty State */}
+          {!state.running && !state.completed && (
+            <div className="empty-state">
+              <div className="icon">&#x25B6;</div>
+              <div>Waiting for pipeline run...</div>
+              <div style={{fontSize: 12, color: 'var(--text-muted)'}}>
+                Run <code className="mono" style={{color: 'var(--green)'}}>triad run --task "..."</code> in another terminal
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ── Event Feed ─────────────────────────────────────────────
+    function EventFeed({ events }) {
+      const bottomRef = useRef(null);
+
+      useEffect(() => {
+        bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, [events.length]);
+
+      if (events.length === 0) {
+        return (
+          <div className="empty-state" style={{height: 200}}>
+            <div style={{fontSize: 12}}>No events yet</div>
+          </div>
+        );
+      }
+
+      function getEventStyle(type) {
+        if (type.includes('arbiter') || type === 'arbiter_verdict') return 'arbiter';
+        if (type === 'error' || type === 'pipeline_halted') return 'error';
+        if (type.includes('stage') || type === 'pipeline_completed') return 'stage';
+        return 'info';
+      }
+
+      function getEventIcon(type) {
+        switch (type) {
+          case 'pipeline_started': return '\u25B6';
+          case 'stage_started': return '\u25CB';
+          case 'stage_completed': return '\u25CF';
+          case 'arbiter_started': return '\u2696';
+          case 'arbiter_verdict': return '\u2696';
+          case 'suggestion_filed': return '\u2197';
+          case 'consensus_vote': return '\u2714';
+          case 'retry_triggered': return '\u21BA';
+          case 'pipeline_completed': return '\u2713';
+          case 'pipeline_halted': return '\u26D4';
+          case 'error': return '\u2717';
+          default: return '\u2022';
+        }
+      }
+
+      function getEventText(event) {
+        const d = event.data || {};
+        switch (event.type) {
+          case 'pipeline_started':
+            return `Pipeline started (${d.mode || 'sequential'}, ${(d.models || []).length} models)`;
+          case 'stage_started':
+            return `${(d.stage || '').toUpperCase()} started \u2192 ${d.model || '?'}`;
+          case 'stage_completed':
+            return `${(d.stage || '').toUpperCase()} complete (${(d.duration || 0).toFixed(1)}s, $${(d.cost || 0).toFixed(4)})`;
+          case 'arbiter_started':
+            return `Arbiter reviewing ${(d.stage || '').toUpperCase()} (${d.arbiter_model || '?'})`;
+          case 'arbiter_verdict':
+            return `Verdict: ${(d.verdict || '').toUpperCase()} for ${(d.stage || '').toUpperCase()} (${d.issues_count || 0} issues)`;
+          case 'suggestion_filed':
+            return `Suggestion from ${d.from_model || '?'}: ${(d.description || '').substring(0, 60)}`;
+          case 'consensus_vote':
+            return `${d.voter || '?'} voted for ${d.voted_for || '?'}`;
+          case 'retry_triggered':
+            return `Retry #${d.retry_number || '?'} for ${(d.stage || '').toUpperCase()}`;
+          case 'pipeline_completed':
+            return `Pipeline complete ($${(d.total_cost || 0).toFixed(4)}, ${(d.duration || 0).toFixed(1)}s)`;
+          case 'pipeline_halted':
+            return `HALTED at ${(d.stage || '').toUpperCase()}: ${(d.reason || '').substring(0, 80)}`;
+          case 'error':
+            return `Error: ${(d.message || d.error || '').substring(0, 80)}`;
+          default:
+            return event.type;
+        }
+      }
+
+      return (
+        <div>
+          {events.map((event, i) => {
+            const style = getEventStyle(event.type);
+            return (
+              <div key={i} className="event-item">
+                <span className="event-time">{formatTime(event.timestamp)}</span>
+                <span className="event-icon">{getEventIcon(event.type)}</span>
+                <span className={`event-text ${style}`}>{getEventText(event)}</span>
+              </div>
+            );
+          })}
+          <div ref={bottomRef} />
+        </div>
+      );
+    }
+
+    // ── Sessions View ──────────────────────────────────────────
+    function SessionsView({ sessions }) {
+      if (!sessions || sessions.length === 0) {
+        return (
+          <div className="empty-state">
+            <div className="icon">&#x1F4CB;</div>
+            <div>No sessions found</div>
+          </div>
+        );
+      }
+
+      return (
+        <table className="sessions-table">
+          <thead>
+            <tr>
+              <th>Session ID</th>
+              <th>Task</th>
+              <th>Mode</th>
+              <th>Status</th>
+              <th>Cost</th>
+              <th>Duration</th>
+              <th>Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sessions.map((s, i) => (
+              <tr key={i}>
+                <td className="mono" style={{fontSize: 11, color: 'var(--text-dim)'}}>
+                  {(s.session_id || '').substring(0, 8)}
+                </td>
+                <td>{(s.task_summary || s.task || '').substring(0, 50)}</td>
+                <td>{s.pipeline_mode || 'sequential'}</td>
+                <td>
+                  {s.success
+                    ? <span className="badge-success">{'\u2713'} Success</span>
+                    : <span className="badge-fail">{'\u2717'} {s.halted ? 'Halted' : 'Failed'}</span>
+                  }
+                </td>
+                <td style={{color: 'var(--green)'}}>${(s.total_cost || 0).toFixed(4)}</td>
+                <td>{(s.duration_seconds || 0).toFixed(1)}s</td>
+                <td style={{color: 'var(--text-dim)', fontSize: 12}}>
+                  {s.started_at ? new Date(s.started_at).toLocaleDateString() : '-'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      );
+    }
+
+    // ── Mount ──────────────────────────────────────────────────
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
