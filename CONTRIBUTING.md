@@ -23,8 +23,11 @@ The full CLA text is available in [CLA.md](./CLA.md).
 Triad requires Python 3.12+ and API keys for at least one supported provider.
 
 ```bash
-# Copy the example env file and add your keys
-cp .env.example .env
+# Configure API keys (interactive wizard with validation)
+triad setup
+
+# Or set environment variables directly if you prefer
+export ANTHROPIC_API_KEY=sk-ant-...
 
 # Run the test suite
 pytest
@@ -32,6 +35,8 @@ pytest
 # Run the linter
 ruff check triad/ tests/
 ```
+
+`triad setup` validates each key against its provider and saves them to `~/.triad/keys.env`. You can also set environment variables directly or use a `.env` file in the project root.
 
 ## Code Standards
 

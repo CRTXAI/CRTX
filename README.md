@@ -12,6 +12,7 @@
 
 <p align="center">
   <a href="#quick-start">Quick Start</a> •
+  <a href="#getting-started">Getting Started</a> •
   <a href="#how-it-works">How It Works</a> •
   <a href="#the-arbiter">The Arbiter</a> •
   <a href="#supported-models">Supported Models</a> •
@@ -154,11 +155,13 @@ When the Arbiter rejects, it doesn't just say "this is wrong." It provides struc
 
 Not every task needs full review. Choose your safety level:
 ```bash
-triad run --task "..." --arbiter full       # Review every stage (critical features)
-triad run --task "..." --arbiter bookend    # Review architecture + final output (default)
-triad run --task "..." --arbiter final      # Review final output only (prototypes)
-triad run --task "..." --arbiter off        # No review (rapid iteration)
+triad run "..." --arbiter full       # Review every stage (critical features)
+triad run "..." --arbiter bookend    # Review architecture + final output (default)
+triad run "..." --arbiter final      # Review final output only (prototypes)
+triad run "..." --arbiter off        # No review (rapid iteration)
 ```
+
+Or in the REPL: `arbiter full` sets the depth for all subsequent tasks in the session.
 
 ---
 
@@ -199,10 +202,12 @@ DeepSeek, Llama, Mistral, Ollama (local), vLLM (self-hosted) — if LiteLLM supp
 | **Debate** | Position papers → rebuttals → final arguments → judgment | Architectural decisions, tradeoff analysis |
 
 ```bash
-triad run --task "..." --mode sequential   # Default
-triad run --task "..." --mode parallel     # Fan-out + consensus
-triad run --task "..." --mode debate       # Structured debate
+triad run "..." --mode sequential   # Default
+triad run "..." --mode parallel     # Fan-out + consensus
+triad run "..." --mode debate       # Structured debate
 ```
+
+Or in the REPL: `mode parallel` sets the mode for all subsequent tasks in the session.
 
 ---
 
@@ -218,10 +223,12 @@ Triad assigns models to pipeline roles based on fitness benchmarks — each mode
 | **hybrid** (default) | Quality for critical stages, cost-optimized for early stages |
 
 ```bash
-triad run --task "..." --route hybrid          # Default
-triad run --task "..." --route quality-first   # Max quality
-triad estimate --task "..." --compare-routes   # Compare costs
+triad run "..." --route hybrid          # Default
+triad run "..." --route quality-first   # Max quality
+triad estimate "..." --compare-routes   # Compare costs
 ```
+
+Or in the REPL: `route quality_first` sets the strategy for all subsequent tasks.
 
 ---
 
@@ -354,6 +361,8 @@ At the default Bookend depth and ~15 tasks/week, the Arbiter adds about **$90/mo
 ```
 triad/
 ├── cli.py                  # Typer + Rich terminal interface
+├── cli_display.py          # Branded UI: logos, config screen, live display, summary
+├── repl.py                 # Interactive REPL with session state
 ├── orchestrator.py         # Pipeline engine (sequential, parallel, debate)
 ├── planner.py              # Task planner (triad plan)
 ├── providers/              # LiteLLM adapter + model registry
