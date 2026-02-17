@@ -104,6 +104,83 @@ def render_summary(result: PipelineResult) -> str:
             lines.append(f"> {preview}")
             lines.append("")
 
+    # Parallel Mode Results
+    if result.parallel_result:
+        pr = result.parallel_result
+        lines.append("## Parallel Exploration Results")
+        lines.append("")
+        lines.append(f"- **Winner:** {pr.winner}")
+        lines.append(f"- **Models:** {len(pr.individual_outputs)}")
+        lines.append("")
+
+        # Voting summary
+        if pr.votes:
+            lines.append("### Votes")
+            lines.append("")
+            lines.append("| Voter | Voted For |")
+            lines.append("|-------|-----------|")
+            for voter, voted_for in pr.votes.items():
+                lines.append(f"| {voter} | {voted_for} |")
+            lines.append("")
+
+        # Cross-review scores
+        if pr.scores:
+            lines.append("### Cross-Review Scores")
+            lines.append("")
+            lines.append("| Reviewer | Reviewed | Arch | Impl | Quality |")
+            lines.append("|----------|----------|------|------|---------|")
+            for reviewer, targets in pr.scores.items():
+                for reviewed, scores in targets.items():
+                    lines.append(
+                        f"| {reviewer} | {reviewed} | "
+                        f"{scores.get('architecture', '-')} | "
+                        f"{scores.get('implementation', '-')} | "
+                        f"{scores.get('quality', '-')} |"
+                    )
+            lines.append("")
+
+        # Synthesized output preview
+        if pr.synthesized_output:
+            preview = pr.synthesized_output[:500]
+            if len(pr.synthesized_output) > 500:
+                preview += "..."
+            lines.append("### Synthesized Output")
+            lines.append("")
+            lines.append(f"> {preview}")
+            lines.append("")
+
+    # Debate Mode Results
+    if result.debate_result:
+        dr = result.debate_result
+        lines.append("## Debate Results")
+        lines.append("")
+        lines.append(f"- **Judge:** {dr.judge_model}")
+        lines.append(f"- **Debaters:** {len(dr.proposals)}")
+        lines.append("")
+
+        # Proposals
+        if dr.proposals:
+            lines.append("### Position Papers")
+            lines.append("")
+            for model_key, proposal in dr.proposals.items():
+                lines.append(f"#### {model_key}")
+                lines.append("")
+                preview = proposal[:300]
+                if len(proposal) > 300:
+                    preview += "..."
+                lines.append(f"> {preview}")
+                lines.append("")
+
+        # Judgment preview
+        if dr.judgment:
+            preview = dr.judgment[:500]
+            if len(dr.judgment) > 500:
+                preview += "..."
+            lines.append("### Judgment")
+            lines.append("")
+            lines.append(f"> {preview}")
+            lines.append("")
+
     # Arbiter Verdicts
     if result.arbiter_reviews:
         lines.append("## Arbiter Verdicts")

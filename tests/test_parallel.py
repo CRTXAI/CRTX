@@ -517,3 +517,324 @@ class TestModeDispatch:
                 _make_three_model_registry(),
             )
             mock_orch_cls.assert_called_once()
+
+
+# ── _select_top_models ───────────────────────────────────────────
+
+
+class TestSelectTopModels:
+    """Tests for the _select_top_models() filtering function."""
+
+    def test_returns_full_registry_when_small(self):
+        """If registry has <= N models, return it unchanged."""
+        from triad.orchestrator import _select_top_models
+
+        registry = _make_three_model_registry()
+        result = _select_top_models(registry, n=3)
+        assert result == registry
+
+    def test_returns_full_registry_when_fewer_than_n(self):
+        """If registry has fewer than N models, return it unchanged."""
+        from triad.orchestrator import _select_top_models
+
+        registry = {
+            "model-a": _make_model_config(model="a-v1"),
+            "model-b": _make_model_config(model="b-v1"),
+        }
+        result = _select_top_models(registry, n=3)
+        assert result == registry
+
+    def test_selects_top_n_by_average_fitness(self):
+        """When registry has > N models, select top N by avg fitness."""
+        from triad.orchestrator import _select_top_models
+
+        registry = {
+            "high": _make_model_config(
+                model="high-v1",
+                fitness=RoleFitness(
+                    architect=0.95, implementer=0.90,
+                    refactorer=0.85, verifier=0.90,
+                ),
+            ),
+            "mid": _make_model_config(
+                model="mid-v1",
+                fitness=RoleFitness(
+                    architect=0.80, implementer=0.80,
+                    refactorer=0.80, verifier=0.80,
+                ),
+            ),
+            "low": _make_model_config(
+                model="low-v1",
+                fitness=RoleFitness(
+                    architect=0.50, implementer=0.50,
+                    refactorer=0.50, verifier=0.50,
+                ),
+            ),
+            "lowest": _make_model_config(
+                model="lowest-v1",
+                fitness=RoleFitness(
+                    architect=0.30, implementer=0.30,
+                    refactorer=0.30, verifier=0.30,
+                ),
+            ),
+        }
+        result = _select_top_models(registry, n=2)
+        assert len(result) == 2
+        assert "high" in result
+        assert "mid" in result
+        assert "low" not in result
+        assert "lowest" not in result
+
+    def test_default_n_is_three(self):
+        """Default n=3 selects top 3 models."""
+        from triad.orchestrator import _select_top_models
+
+        registry = {
+            f"model-{i}": _make_model_config(
+                model=f"model-{i}-v1",
+                fitness=RoleFitness(
+                    architect=0.1 * (i + 1), implementer=0.1 * (i + 1),
+                    refactorer=0.1 * (i + 1), verifier=0.1 * (i + 1),
+                ),
+            )
+            for i in range(5)
+        }
+        result = _select_top_models(registry)
+        assert len(result) == 3
+        # Top 3 should be models 4, 3, 2 (highest average fitness)
+        assert "model-4" in result
+        assert "model-3" in result
+        assert "model-2" in result
+
+    def test_single_model_returned_unchanged(self):
+        """A single-model registry is returned as-is."""
+        from triad.orchestrator import _select_top_models
+
+        registry = {"only": _make_model_config(model="only-v1")}
+        result = _select_top_models(registry, n=3)
+        assert result == registry
+
+
+# ── Parallel Event Emissions ─────────────────────────────────────
+
+
+class TestParallelEventEmissions:
+    """Tests that the parallel orchestrator emits correct events."""
+
+    async def test_emits_pipeline_started_and_completed(self):
+        """Parallel mode should emit pipeline_started and pipeline_completed."""
+        from triad.dashboard.events import PipelineEventEmitter
+
+        registry = _make_three_model_registry()
+        responses = [_make_agent_message(f"out-{i}") for i in range(10)]
+        mock_cls, _ = _mock_provider(responses)
+        emitter = PipelineEventEmitter()
+
+        with (
+            patch(_PROVIDER, mock_cls),
+            patch(_ARBITER_REVIEW, AsyncMock(return_value=_make_approve_review())),
+        ):
+            orch = ParallelOrchestrator(
+                task=_make_task(),
+                config=PipelineConfig(
+                    pipeline_mode="parallel", arbiter_mode="off",
+                ),
+                registry=registry,
+                event_emitter=emitter,
+            )
+            result = await orch.run()
+
+        event_types = [e.type for e in emitter.history]
+        assert "pipeline_started" in event_types
+        assert "pipeline_completed" in event_types
+
+    async def test_emits_stage_started_and_completed(self):
+        """Parallel mode should emit stage_started/completed for each phase."""
+        from triad.dashboard.events import PipelineEventEmitter
+
+        registry = _make_three_model_registry()
+        responses = [_make_agent_message(f"out-{i}") for i in range(10)]
+        mock_cls, _ = _mock_provider(responses)
+        emitter = PipelineEventEmitter()
+
+        with (
+            patch(_PROVIDER, mock_cls),
+            patch(_ARBITER_REVIEW, AsyncMock(return_value=_make_approve_review())),
+        ):
+            orch = ParallelOrchestrator(
+                task=_make_task(),
+                config=PipelineConfig(
+                    pipeline_mode="parallel", arbiter_mode="off",
+                ),
+                registry=registry,
+                event_emitter=emitter,
+            )
+            await orch.run()
+
+        event_types = [e.type for e in emitter.history]
+        assert event_types.count("stage_started") >= 3
+        assert event_types.count("stage_completed") >= 3
+
+    async def test_emits_consensus_vote(self):
+        """Parallel mode should emit a consensus_vote event."""
+        from triad.dashboard.events import PipelineEventEmitter
+
+        registry = _make_three_model_registry()
+        responses = [_make_agent_message(f"out-{i}") for i in range(10)]
+        mock_cls, _ = _mock_provider(responses)
+        emitter = PipelineEventEmitter()
+
+        with (
+            patch(_PROVIDER, mock_cls),
+            patch(_ARBITER_REVIEW, AsyncMock(return_value=_make_approve_review())),
+        ):
+            orch = ParallelOrchestrator(
+                task=_make_task(),
+                config=PipelineConfig(
+                    pipeline_mode="parallel", arbiter_mode="off",
+                ),
+                registry=registry,
+                event_emitter=emitter,
+            )
+            await orch.run()
+
+        event_types = [e.type for e in emitter.history]
+        assert "consensus_vote" in event_types
+
+    async def test_pipeline_started_event_has_mode_parallel(self):
+        """pipeline_started event should have mode='parallel'."""
+        from triad.dashboard.events import PipelineEventEmitter
+
+        registry = _make_three_model_registry()
+        responses = [_make_agent_message(f"out-{i}") for i in range(10)]
+        mock_cls, _ = _mock_provider(responses)
+        emitter = PipelineEventEmitter()
+
+        with (
+            patch(_PROVIDER, mock_cls),
+            patch(_ARBITER_REVIEW, AsyncMock(return_value=_make_approve_review())),
+        ):
+            orch = ParallelOrchestrator(
+                task=_make_task(),
+                config=PipelineConfig(
+                    pipeline_mode="parallel", arbiter_mode="off",
+                ),
+                registry=registry,
+                event_emitter=emitter,
+            )
+            await orch.run()
+
+        started_events = [
+            e for e in emitter.history if e.type == "pipeline_started"
+        ]
+        assert len(started_events) == 1
+        assert started_events[0].data["mode"] == "parallel"
+
+    async def test_no_events_when_no_emitter(self):
+        """When no emitter is provided, no events are emitted (no error)."""
+        registry = _make_three_model_registry()
+        responses = [_make_agent_message(f"out-{i}") for i in range(10)]
+        mock_cls, _ = _mock_provider(responses)
+
+        with (
+            patch(_PROVIDER, mock_cls),
+            patch(_ARBITER_REVIEW, AsyncMock(return_value=_make_approve_review())),
+        ):
+            orch = ParallelOrchestrator(
+                task=_make_task(),
+                config=PipelineConfig(
+                    pipeline_mode="parallel", arbiter_mode="off",
+                ),
+                registry=registry,
+                event_emitter=None,
+            )
+            result = await orch.run()
+
+        # Should complete without error
+        assert result.success is True
+
+
+# ── Parallel Fallback ────────────────────────────────────────────
+
+
+class TestParallelFallback:
+    """Tests for _call_model fallback behavior in ParallelOrchestrator."""
+
+    async def test_fallback_on_primary_failure(self):
+        """If the primary model fails, fallback to another model."""
+        registry = _make_three_model_registry()
+        # Extend full registry with an extra fallback model
+        full_registry = {
+            **registry,
+            "fallback": _make_model_config(
+                model="fallback-v1",
+                fitness=RoleFitness(
+                    architect=0.6, implementer=0.6,
+                    refactorer=0.6, verifier=0.6,
+                ),
+            ),
+        }
+
+        # First call fails (primary), then all subsequent succeed
+        fail_then_succeed = AsyncMock(
+            side_effect=[
+                RuntimeError("rate limited"),
+                _make_agent_message("fallback output"),
+                # Remaining calls for the rest of the pipeline
+            ] + [_make_agent_message(f"out-{i}") for i in range(20)],
+        )
+
+        mock_cls = MagicMock()
+        mock_inst = MagicMock()
+        mock_cls.return_value = mock_inst
+        mock_inst.complete = fail_then_succeed
+
+        with (
+            patch(_PROVIDER, mock_cls),
+            patch(_ARBITER_REVIEW, AsyncMock(return_value=_make_approve_review())),
+        ):
+            orch = ParallelOrchestrator(
+                task=_make_task(),
+                config=PipelineConfig(
+                    pipeline_mode="parallel", arbiter_mode="off",
+                ),
+                registry=registry,
+            )
+            # The _call_model should retry with a fallback on failure
+            msg = await orch._call_model(
+                "model-a",
+                registry["model-a"],
+                "architect",
+                120,
+            )
+
+        assert msg.content is not None
+
+    async def test_all_models_fail_raises(self):
+        """If all models fail, RuntimeError is raised."""
+        registry = {
+            "model-a": _make_model_config(model="a-v1"),
+        }
+
+        mock_cls = MagicMock()
+        mock_inst = MagicMock()
+        mock_cls.return_value = mock_inst
+        mock_inst.complete = AsyncMock(
+            side_effect=RuntimeError("all down"),
+        )
+
+        with patch(_PROVIDER, mock_cls):
+            orch = ParallelOrchestrator(
+                task=_make_task(),
+                config=PipelineConfig(
+                    pipeline_mode="parallel", arbiter_mode="off",
+                ),
+                registry=registry,
+            )
+            with pytest.raises(RuntimeError, match="All models failed"):
+                await orch._call_model(
+                    "model-a",
+                    registry["model-a"],
+                    "architect",
+                    120,
+                )

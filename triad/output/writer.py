@@ -81,6 +81,9 @@ def _extract_code_files(
     Looks for code blocks with "# file: path" hints. Files containing
     "test" in their name go to tests_dir, others to code_dir.
     Falls back to extracting from AgentMessage.code_blocks if available.
+
+    For parallel/debate modes (where result.stages is empty), extracts
+    from synthesized_output or judgment respectively.
     """
     # Track written filenames to avoid duplicates between passes
     written: set[str] = set()
@@ -109,10 +112,18 @@ def _extract_code_files(
             file_path.write_text(block.content, encoding="utf-8")
             written.add(filename)
 
-    # Then parse raw content from the last stage (most complete output)
+    # Determine the final content to scan for code blocks
+    # For sequential mode: last stage output
+    # For parallel mode: synthesized_output
+    # For debate mode: judgment
     final_content = ""
     for stage_msg in result.stages.values():
         final_content = stage_msg.content
+
+    if not final_content and result.parallel_result:
+        final_content = result.parallel_result.synthesized_output
+    if not final_content and result.debate_result:
+        final_content = result.debate_result.judgment
 
     if not final_content:
         return

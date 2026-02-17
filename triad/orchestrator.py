@@ -892,13 +892,40 @@ def _get_tiebreaker_key(registry: dict[str, ModelConfig]) -> str:
 # ── Parallel Exploration Orchestrator ─────────────────────────────
 
 
+def _select_top_models(
+    registry: dict[str, ModelConfig],
+    n: int = 3,
+) -> dict[str, ModelConfig]:
+    """Select the top N models from the registry by average fitness.
+
+    Used by parallel and debate orchestrators to avoid fanning out to
+    the entire registry (which could be 8+ models). Selects models
+    with the highest average fitness across all roles.
+
+    Returns at least 2 models (minimum for parallel/debate), or the
+    full registry if it has fewer than N entries.
+    """
+    if len(registry) <= n:
+        return registry
+
+    def avg_fitness(cfg: ModelConfig) -> float:
+        f = cfg.fitness
+        return (f.architect + f.implementer + f.refactorer + f.verifier) / 4
+
+    ranked = sorted(registry.items(), key=lambda kv: avg_fitness(kv[1]), reverse=True)
+    return dict(ranked[:n])
+
+
 class ParallelOrchestrator:
     """Parallel exploration pipeline mode.
 
-    All models in the registry produce independent solutions in parallel.
-    Cross-review scoring determines a winner via consensus vote. The
-    winner's approach is enhanced with the best elements from others.
+    Top models (selected by average fitness) produce independent solutions
+    in parallel. Cross-review scoring determines a winner via consensus
+    vote. The winner's approach is enhanced with the best elements from
+    others.
     """
+
+    _MAX_PARALLEL_MODELS = 3
 
     def __init__(
         self,
@@ -909,9 +936,11 @@ class ParallelOrchestrator:
     ) -> None:
         self._task = task
         self._config = config
-        self._registry = registry
+        self._full_registry = registry
+        self._registry = _select_top_models(registry, self._MAX_PARALLEL_MODELS)
         self._emitter = event_emitter
-        self._arbiter = ArbiterEngine(config, registry)
+        self._health = ProviderHealth()
+        self._arbiter = ArbiterEngine(config, registry, health=self._health)
         self._consensus = ConsensusEngine(config, registry)
 
     async def _emit(self, event_type: str, **data: object) -> None:
@@ -927,8 +956,20 @@ class ParallelOrchestrator:
         timeout = self._config.default_timeout
         consensus_result: ConsensusResult | None = None
 
+        await self._emit(
+            "pipeline_started",
+            mode="parallel",
+            task_summary=self._task.task[:200],
+            models=list(self._registry.keys()),
+        )
+
         # Phase 1: Fan-out — all models produce solutions in parallel
         logger.info("Parallel fan-out: %d models", len(self._registry))
+        await self._emit(
+            "stage_started",
+            stage="parallel_fan_out",
+            model=f"{len(self._registry)} models",
+        )
         individual_outputs: dict[str, str] = {}
         fan_out_tasks = {}
         for key, cfg in self._registry.items():
@@ -942,9 +983,25 @@ class ParallelOrchestrator:
         for key, result in zip(fan_out_tasks, results, strict=True):
             if isinstance(result, Exception):
                 logger.error("Model %s failed in fan-out: %s", key, result)
+                await self._emit(
+                    "error",
+                    stage="parallel_fan_out",
+                    error=f"{key} failed: {result}",
+                )
                 continue
             individual_outputs[key] = result.content
             all_messages.append(result)
+
+        fan_out_cost = sum(
+            m.token_usage.cost for m in all_messages if m.token_usage
+        )
+        await self._emit(
+            "stage_completed",
+            stage="parallel_fan_out",
+            model=f"{len(individual_outputs)} succeeded",
+            duration=time.monotonic() - start,
+            cost=fan_out_cost,
+        )
 
         if len(individual_outputs) < 2:
             raise RuntimeError(
@@ -954,6 +1011,11 @@ class ParallelOrchestrator:
 
         # Phase 2: Cross-review — each model scores the others
         logger.info("Parallel cross-review")
+        await self._emit(
+            "stage_started",
+            stage="parallel_cross_review",
+            model=f"{len(individual_outputs)} reviewers",
+        )
         scores: dict[str, dict[str, dict[str, int]]] = {}
         review_tasks = []
         review_keys: list[tuple[str, str]] = []
@@ -993,6 +1055,17 @@ class ParallelOrchestrator:
                 scores[reviewer] = {}
             scores[reviewer][reviewed] = _extract_scores(result.content)
 
+        review_cost = sum(
+            m.token_usage.cost for m in all_messages if m.token_usage
+        ) - fan_out_cost
+        await self._emit(
+            "stage_completed",
+            stage="parallel_cross_review",
+            model=f"{len(review_keys)} reviews",
+            duration=time.monotonic() - start,
+            cost=review_cost,
+        )
+
         # Phase 3: Vote — derive votes from scores
         votes: dict[str, str] = {}
         for voter, voter_scores in scores.items():
@@ -1013,8 +1086,20 @@ class ParallelOrchestrator:
         winner = consensus_result.winner
         logger.info("Parallel winner: %s (method=%s)", winner, consensus_result.method)
 
+        await self._emit(
+            "consensus_vote",
+            votes=votes,
+            winner=winner,
+            method=consensus_result.method,
+        )
+
         # Phase 5: Synthesis — winner enhances with best of others
         logger.info("Parallel synthesis by %s", winner)
+        await self._emit(
+            "stage_started",
+            stage="parallel_synthesis",
+            model=winner,
+        )
         winner_cfg = self._registry[winner]
         other_outputs = {
             k: v for k, v in individual_outputs.items() if k != winner
@@ -1030,6 +1115,15 @@ class ParallelOrchestrator:
         )
         all_messages.append(synth_msg)
         synthesized_output = synth_msg.content
+
+        synth_cost = synth_msg.token_usage.cost if synth_msg.token_usage else 0.0
+        await self._emit(
+            "stage_completed",
+            stage="parallel_synthesis",
+            model=winner,
+            duration=time.monotonic() - start,
+            cost=synth_cost,
+        )
 
         # Phase 6: Arbiter review of synthesized output
         if self._config.arbiter_mode != ArbiterMode.OFF:
@@ -1055,6 +1149,15 @@ class ParallelOrchestrator:
 
         halted = any(r.verdict == Verdict.HALT for r in arbiter_reviews)
 
+        if not halted:
+            await self._emit(
+                "pipeline_completed",
+                success=True,
+                total_cost=total_cost,
+                total_tokens=total_tokens,
+                duration=duration,
+            )
+
         return PipelineResult(
             task=self._task,
             config=self._config,
@@ -1078,6 +1181,8 @@ class ParallelOrchestrator:
             ),
         )
 
+    _MAX_CALL_ATTEMPTS = 2
+
     async def _call_model(
         self,
         model_key: str,
@@ -1086,7 +1191,11 @@ class ParallelOrchestrator:
         timeout: int,
         **template_vars: object,
     ) -> AgentMessage:
-        """Call a model with a rendered prompt template."""
+        """Call a model with a rendered prompt template.
+
+        Retries once with a fallback model from the full registry if the
+        primary call fails with a transient error.
+        """
         tpl_vars: dict = {
             "task": self._task.task,
             "context": self._task.context,
@@ -1094,24 +1203,65 @@ class ParallelOrchestrator:
             **template_vars,
         }
         system = render_prompt(template_name, **tpl_vars)
-        provider = LiteLLMProvider(model_config)
+        tried: list[str] = []
 
-        msg = await provider.complete(
-            messages=[{
-                "role": "user",
-                "content": (
-                    "Execute the task as described "
-                    "in your system instructions."
-                ),
-            }],
-            system=system,
-            timeout=timeout,
+        for attempt in range(self._MAX_CALL_ATTEMPTS):
+            if attempt == 0:
+                cfg = model_config
+                key = model_key
+            else:
+                # Fallback: pick the best available model not yet tried
+                candidates = {
+                    k: v for k, v in self._full_registry.items()
+                    if k not in tried and self._health.is_healthy(k)
+                }
+                if not candidates:
+                    break
+                key = max(
+                    candidates,
+                    key=lambda k: (
+                        candidates[k].fitness.architect
+                        + candidates[k].fitness.implementer
+                    ) / 2,
+                )
+                cfg = candidates[key]
+                logger.info(
+                    "Parallel fallback %s → %s", model_key, key,
+                )
+
+            tried.append(key)
+            try:
+                provider = LiteLLMProvider(cfg)
+                msg = await provider.complete(
+                    messages=[{
+                        "role": "user",
+                        "content": (
+                            "Execute the task as described "
+                            "in your system instructions."
+                        ),
+                    }],
+                    system=system,
+                    timeout=timeout,
+                )
+                msg.from_agent = PipelineStage.ARCHITECT
+                msg.to_agent = PipelineStage.ARCHITECT
+                msg.msg_type = MessageType.PROPOSAL
+                msg.confidence = _extract_confidence(msg.content)
+                return msg
+            except (RuntimeError, TimeoutError) as e:
+                self._health.mark_unhealthy(key)
+                logger.warning(
+                    "%s failed in parallel call (%s), %s",
+                    key,
+                    _short_error_reason(e),
+                    "falling back" if attempt < self._MAX_CALL_ATTEMPTS - 1 else "giving up",
+                )
+                last_error = e
+
+        raise RuntimeError(
+            f"All models failed for parallel {template_name}: "
+            f"tried {tried}. Last error: {last_error}"
         )
-        msg.from_agent = PipelineStage.ARCHITECT
-        msg.to_agent = PipelineStage.ARCHITECT
-        msg.msg_type = MessageType.PROPOSAL
-        msg.confidence = _extract_confidence(msg.content)
-        return msg
 
 
 # ── Debate Orchestrator ───────────────────────────────────────────
@@ -1120,9 +1270,12 @@ class ParallelOrchestrator:
 class DebateOrchestrator:
     """Structured debate pipeline mode.
 
-    Each model proposes an approach, writes rebuttals of other proposals,
-    presents final arguments, and a judge model renders a decision.
+    Top models (selected by average fitness) propose approaches, write
+    rebuttals, present final arguments, and a judge model renders a
+    decision. The judge is selected from outside the debaters when possible.
     """
+
+    _MAX_DEBATE_MODELS = 3
 
     def __init__(
         self,
@@ -1133,9 +1286,11 @@ class DebateOrchestrator:
     ) -> None:
         self._task = task
         self._config = config
-        self._registry = registry
+        self._full_registry = registry
+        self._registry = _select_top_models(registry, self._MAX_DEBATE_MODELS)
         self._emitter = event_emitter
-        self._arbiter = ArbiterEngine(config, registry)
+        self._health = ProviderHealth()
+        self._arbiter = ArbiterEngine(config, registry, health=self._health)
         self._consensus = ConsensusEngine(config, registry)
 
     async def _emit(self, event_type: str, **data: object) -> None:
@@ -1150,10 +1305,22 @@ class DebateOrchestrator:
         all_messages: list[AgentMessage] = []
         timeout = self._config.default_timeout
 
+        await self._emit(
+            "pipeline_started",
+            mode="debate",
+            task_summary=self._task.task[:200],
+            models=list(self._registry.keys()),
+        )
+
         # Phase 1: Position papers
         logger.info(
             "Debate: position papers from %d models",
             len(self._registry),
+        )
+        await self._emit(
+            "stage_started",
+            stage="debate_proposals",
+            model=f"{len(self._registry)} debaters",
         )
         proposals: dict[str, str] = {}
         prop_tasks = {}
@@ -1170,9 +1337,21 @@ class DebateOrchestrator:
                 logger.error(
                     "Model %s failed in proposal: %s", key, result,
                 )
+                await self._emit(
+                    "error",
+                    stage="debate_proposals",
+                    error=f"{key} failed: {result}",
+                )
                 continue
             proposals[key] = result.content
             all_messages.append(result)
+
+        await self._emit(
+            "stage_completed",
+            stage="debate_proposals",
+            model=f"{len(proposals)} proposals",
+            duration=time.monotonic() - start,
+        )
 
         if len(proposals) < 2:
             raise RuntimeError(
@@ -1182,6 +1361,11 @@ class DebateOrchestrator:
 
         # Phase 2: Rebuttals
         logger.info("Debate: rebuttals")
+        await self._emit(
+            "stage_started",
+            stage="debate_rebuttals",
+            model=f"{len(proposals)} rebuttals",
+        )
         rebuttals: dict[str, dict[str, str]] = {}
         rebuttal_tasks = {}
         for key, cfg in self._registry.items():
@@ -1214,8 +1398,20 @@ class DebateOrchestrator:
                 result.content, other_keys,
             )
 
+        await self._emit(
+            "stage_completed",
+            stage="debate_rebuttals",
+            model=f"{len(rebuttals)} rebuttals",
+            duration=time.monotonic() - start,
+        )
+
         # Phase 3: Final arguments
         logger.info("Debate: final arguments")
+        await self._emit(
+            "stage_started",
+            stage="debate_final_arguments",
+            model=f"{len(proposals)} models",
+        )
         final_arguments: dict[str, str] = {}
         final_tasks = {}
         for key, cfg in self._registry.items():
@@ -1247,10 +1443,22 @@ class DebateOrchestrator:
             final_arguments[key] = result.content
             all_messages.append(result)
 
-        # Phase 4: Judgment
-        judge_key = _get_tiebreaker_key(self._registry)
-        judge_cfg = self._registry[judge_key]
+        await self._emit(
+            "stage_completed",
+            stage="debate_final_arguments",
+            model=f"{len(final_arguments)} finals",
+            duration=time.monotonic() - start,
+        )
+
+        # Phase 4: Judgment — select judge outside debaters when possible
+        judge_key = self._select_judge(set(proposals.keys()))
+        judge_cfg = self._full_registry[judge_key]
         logger.info("Debate: judgment by %s", judge_key)
+        await self._emit(
+            "stage_started",
+            stage="debate_judgment",
+            model=judge_key,
+        )
 
         judge_msg = await self._call_model(
             judge_key,
@@ -1263,6 +1471,15 @@ class DebateOrchestrator:
         )
         all_messages.append(judge_msg)
         judgment = judge_msg.content
+
+        judge_cost = judge_msg.token_usage.cost if judge_msg.token_usage else 0.0
+        await self._emit(
+            "stage_completed",
+            stage="debate_judgment",
+            model=judge_key,
+            duration=time.monotonic() - start,
+            cost=judge_cost,
+        )
 
         # Phase 5: Arbiter review of judgment
         if self._config.arbiter_mode != ArbiterMode.OFF:
@@ -1288,6 +1505,15 @@ class DebateOrchestrator:
 
         halted = any(r.verdict == Verdict.HALT for r in arbiter_reviews)
 
+        if not halted:
+            await self._emit(
+                "pipeline_completed",
+                success=True,
+                total_cost=total_cost,
+                total_tokens=total_tokens,
+                duration=duration,
+            )
+
         return PipelineResult(
             task=self._task,
             config=self._config,
@@ -1311,6 +1537,23 @@ class DebateOrchestrator:
             ),
         )
 
+    def _select_judge(self, debater_keys: set[str]) -> str:
+        """Select a judge model, preferring one outside the debaters.
+
+        Falls back to the highest-fitness verifier among debaters if no
+        external judge is available.
+        """
+        # Try to find a judge outside the debaters from the full registry
+        external = {
+            k: v for k, v in self._full_registry.items()
+            if k not in debater_keys
+        }
+        if external:
+            return max(external, key=lambda k: external[k].fitness.verifier)
+
+        # No external models — fall back to best debater
+        return _get_tiebreaker_key(self._registry)
+
     def _parse_rebuttals(
         self,
         content: str,
@@ -1318,19 +1561,31 @@ class DebateOrchestrator:
     ) -> dict[str, str]:
         """Parse a combined rebuttal output into per-target rebuttals.
 
-        Looks for '## Rebuttal: <model_key>' headers. Falls back to
-        assigning the entire content to all targets if parsing fails.
+        Looks for '## Rebuttal: <model_key>' or '## <model_key>' headers.
+        Also tries '### Rebuttal' or '## Response to <model_key>'. Falls
+        back to assigning the entire content to all targets if parsing fails.
         """
         parsed: dict[str, str] = {}
         for key in target_keys:
-            pattern = rf"##\s*Rebuttal:\s*{re.escape(key)}"
-            match = re.search(pattern, content, re.IGNORECASE)
+            # Try several heading patterns
+            patterns = [
+                rf"##\s*Rebuttal:\s*{re.escape(key)}",
+                rf"##\s*Response\s+to\s*{re.escape(key)}",
+                rf"##\s*{re.escape(key)}",
+                rf"###\s*Rebuttal:\s*{re.escape(key)}",
+            ]
+            match = None
+            for pat in patterns:
+                match = re.search(pat, content, re.IGNORECASE)
+                if match:
+                    break
+
             if match:
                 start_pos = match.end()
+                # Find the next heading at the same or higher level
                 next_match = re.search(
-                    r"##\s*Rebuttal:",
+                    r"\n##\s+",
                     content[start_pos:],
-                    re.IGNORECASE,
                 )
                 end = (
                     start_pos + next_match.start()
@@ -1343,6 +1598,8 @@ class DebateOrchestrator:
 
         return parsed
 
+    _MAX_CALL_ATTEMPTS = 2
+
     async def _call_model(
         self,
         model_key: str,
@@ -1351,7 +1608,11 @@ class DebateOrchestrator:
         timeout: int,
         **template_vars: object,
     ) -> AgentMessage:
-        """Call a model with a rendered prompt template."""
+        """Call a model with a rendered prompt template.
+
+        Retries once with a fallback model from the full registry if the
+        primary call fails with a transient error.
+        """
         tpl_vars: dict = {
             "task": self._task.task,
             "context": self._task.context,
@@ -1359,24 +1620,64 @@ class DebateOrchestrator:
             **template_vars,
         }
         system = render_prompt(template_name, **tpl_vars)
-        provider = LiteLLMProvider(model_config)
+        tried: list[str] = []
 
-        msg = await provider.complete(
-            messages=[{
-                "role": "user",
-                "content": (
-                    "Execute the task as described "
-                    "in your system instructions."
-                ),
-            }],
-            system=system,
-            timeout=timeout,
+        for attempt in range(self._MAX_CALL_ATTEMPTS):
+            if attempt == 0:
+                cfg = model_config
+                key = model_key
+            else:
+                candidates = {
+                    k: v for k, v in self._full_registry.items()
+                    if k not in tried and self._health.is_healthy(k)
+                }
+                if not candidates:
+                    break
+                key = max(
+                    candidates,
+                    key=lambda k: (
+                        candidates[k].fitness.architect
+                        + candidates[k].fitness.implementer
+                    ) / 2,
+                )
+                cfg = candidates[key]
+                logger.info(
+                    "Debate fallback %s → %s", model_key, key,
+                )
+
+            tried.append(key)
+            try:
+                provider = LiteLLMProvider(cfg)
+                msg = await provider.complete(
+                    messages=[{
+                        "role": "user",
+                        "content": (
+                            "Execute the task as described "
+                            "in your system instructions."
+                        ),
+                    }],
+                    system=system,
+                    timeout=timeout,
+                )
+                msg.from_agent = PipelineStage.ARCHITECT
+                msg.to_agent = PipelineStage.ARCHITECT
+                msg.msg_type = MessageType.PROPOSAL
+                msg.confidence = _extract_confidence(msg.content)
+                return msg
+            except (RuntimeError, TimeoutError) as e:
+                self._health.mark_unhealthy(key)
+                logger.warning(
+                    "%s failed in debate call (%s), %s",
+                    key,
+                    _short_error_reason(e),
+                    "falling back" if attempt < self._MAX_CALL_ATTEMPTS - 1 else "giving up",
+                )
+                last_error = e
+
+        raise RuntimeError(
+            f"All models failed for debate {template_name}: "
+            f"tried {tried}. Last error: {last_error}"
         )
-        msg.from_agent = PipelineStage.ARCHITECT
-        msg.to_agent = PipelineStage.ARCHITECT
-        msg.msg_type = MessageType.PROPOSAL
-        msg.confidence = _extract_confidence(msg.content)
-        return msg
 
 
 # ── Pipeline Dispatcher ──────────────────────────────────────────

@@ -8,12 +8,18 @@ session state management, and task execution. Launch with `triad`
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 import shlex
 
 from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 from rich.text import Text
 
 from triad.cli_display import BRAND
+
+logger = logging.getLogger(__name__)
 
 console = Console()
 
@@ -53,7 +59,8 @@ class TriadREPL:
 
     def run(self) -> None:
         """Main REPL loop."""
-        self._show_help_hint()
+        self._print_status_dashboard()
+        self._print_quick_start()
 
         while True:
             try:
@@ -72,12 +79,87 @@ class TriadREPL:
                 console.print(f"\n[{BRAND['dim']}]Goodbye.[/{BRAND['dim']}]")
                 break
 
-    def _show_help_hint(self) -> None:
-        """Show a brief hint about available commands."""
-        console.print(
-            f"[{BRAND['dim']}]Type a task description to run the pipeline, "
-            f"or 'help' for commands.[/{BRAND['dim']}]"
-        )
+    def _print_status_dashboard(self) -> None:
+        """Print the provider/model/defaults status panel."""
+        from triad.keys import PROVIDER_NAMES, PROVIDERS, load_keys_env
+
+        # Load keys so os.environ is populated
+        load_keys_env()
+
+        # ── Provider connectivity ─────────────────────────────────
+        provider_text = Text("  Providers:  ")
+        for env_var, _, _, _ in PROVIDERS:
+            name = PROVIDER_NAMES.get(env_var, env_var)
+            has_key = bool(os.environ.get(env_var))
+            if has_key:
+                provider_text.append_text(
+                    Text.from_markup(f"[green]✓[/green] {name}  ")
+                )
+            else:
+                provider_text.append_text(
+                    Text.from_markup(f"[dim red]✗[/dim red] [dim]{name}[/dim]  ")
+                )
+
+        # ── Model count ───────────────────────────────────────────
+        model_count = 0
+        active_providers: set[str] = set()
+        try:
+            from triad.providers.registry import load_models
+
+            registry = load_models()
+            for cfg in registry.values():
+                key_env = cfg.api_key_env
+                if os.environ.get(key_env):
+                    model_count += 1
+                    active_providers.add(cfg.provider)
+        except Exception:
+            logger.debug("Could not load model registry for status dashboard")
+
+        model_text = Text(f"  Models:     {model_count} available")
+        if active_providers:
+            model_text.append(f" across {len(active_providers)} provider")
+            if len(active_providers) != 1:
+                model_text.append("s")
+
+        # ── Defaults ──────────────────────────────────────────────
+        defaults_text = Text("  Defaults:   ")
+        defaults_text.append(self.mode, style=BRAND["green"])
+        defaults_text.append(" │ ", style="dim")
+        defaults_text.append(self.arbiter, style=BRAND["green"])
+        defaults_text.append(" │ ", style="dim")
+        defaults_text.append(self.route, style=BRAND["green"])
+
+        # ── Assemble panel ────────────────────────────────────────
+        body = Text()
+        body.append_text(provider_text)
+        body.append("\n")
+        body.append_text(model_text)
+        body.append("\n")
+        body.append_text(defaults_text)
+
+        console.print(Panel(
+            body,
+            title="[bold]Status[/bold]",
+            border_style="dim",
+            expand=True,
+            padding=(0, 1),
+        ))
+
+    def _print_quick_start(self) -> None:
+        """Print compact quick-start command hints."""
+        table = Table.grid(padding=(0, 4))
+        table.add_column(style=BRAND["green"], width=24)
+        table.add_column(style="dim")
+
+        table.add_row("Just type your task", "Run a pipeline with current defaults")
+        table.add_row("config", "View or change settings")
+        table.add_row("models", "See available models + fitness scores")
+        table.add_row("help", "All commands")
+
+        console.print()
+        console.print(Text("  Quick start:", style="bold"))
+        console.print(table)
+        console.print()
 
     def _dispatch(self, user_input: str) -> None:
         """Dispatch a user input line to the appropriate handler."""

@@ -1,11 +1,12 @@
 """Tests for the interactive REPL.
 
-Covers command dispatch, session state management, and exit handling.
+Covers command dispatch, session state management, exit handling,
+and welcome screen status dashboard.
 """
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from triad.repl import _VALID_ARBITERS, _VALID_MODES, _VALID_ROUTES, TriadREPL
 
@@ -195,3 +196,86 @@ class TestREPLLoop:
         mock_console.input.side_effect = ["exit"]
         repl = TriadREPL()
         repl.run()  # Should not raise (EOFError is caught)
+
+
+# ── Welcome Dashboard ───────────────────────────────────────────
+
+
+class TestStatusDashboard:
+    @patch("triad.repl.console")
+    def test_dashboard_prints_without_error(self, mock_console):
+        """Status dashboard renders without raising."""
+        repl = TriadREPL()
+        repl._print_status_dashboard()
+        # console.print was called at least once (the Panel)
+        assert mock_console.print.called
+
+    @patch("triad.repl.console")
+    def test_quick_start_prints_without_error(self, mock_console):
+        """Quick start hints render without raising."""
+        repl = TriadREPL()
+        repl._print_quick_start()
+        assert mock_console.print.called
+
+    @patch("triad.repl.console")
+    def test_dashboard_shows_providers(self, mock_console):
+        """Dashboard output includes provider names."""
+        from rich.panel import Panel
+
+        repl = TriadREPL()
+        repl._print_status_dashboard()
+        # Find the Panel passed to console.print
+        for call in mock_console.print.call_args_list:
+            for arg in call[0]:
+                if isinstance(arg, Panel):
+                    # Panel.renderable is the Text body
+                    body_text = arg.renderable.plain
+                    assert "Providers" in body_text or "Providers" in str(arg.title)
+                    return
+        raise AssertionError("No Panel found in console.print calls")
+
+    @patch("triad.repl.console")
+    def test_dashboard_shows_defaults(self, mock_console):
+        """Dashboard shows current defaults."""
+        from rich.panel import Panel
+
+        repl = TriadREPL()
+        repl.mode = "parallel"
+        repl.arbiter = "full"
+        repl.route = "quality_first"
+        repl._print_status_dashboard()
+        for call in mock_console.print.call_args_list:
+            for arg in call[0]:
+                if isinstance(arg, Panel):
+                    body = arg.renderable.plain
+                    assert "parallel" in body
+                    assert "full" in body
+                    assert "quality_first" in body
+                    return
+        raise AssertionError("No Panel found")
+
+    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test"}, clear=False)
+    @patch("triad.repl.console")
+    def test_dashboard_detects_configured_key(self, mock_console):
+        """Dashboard shows checkmark for a configured provider."""
+        from rich.panel import Panel
+
+        repl = TriadREPL()
+        repl._print_status_dashboard()
+        for call in mock_console.print.call_args_list:
+            for arg in call[0]:
+                if isinstance(arg, Panel):
+                    body = arg.renderable.plain
+                    assert "✓" in body
+                    return
+        raise AssertionError("No Panel found")
+
+    @patch("triad.repl.console")
+    def test_run_calls_dashboard(self, mock_console):
+        """run() calls _print_status_dashboard before entering loop."""
+        mock_console.input.side_effect = KeyboardInterrupt
+        repl = TriadREPL()
+        with patch.object(repl, "_print_status_dashboard") as mock_dash:
+            with patch.object(repl, "_print_quick_start"):
+                repl.run()
+            mock_dash.assert_called_once()

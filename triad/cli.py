@@ -24,6 +24,7 @@ from triad.schemas.pipeline import (
     PipelineMode,
     TaskSpec,
 )
+from triad.schemas.consensus import DebateResult, ParallelResult
 from triad.schemas.routing import RoutingStrategy
 
 # Load API keys from ~/.triad/keys.env and .env on startup
@@ -733,6 +734,73 @@ def _display_result(result) -> None:
             )
         console.print(fb_table)
         console.print()
+
+    # Parallel mode results
+    if isinstance(getattr(result, 'parallel_result', None), ParallelResult):
+        pr = result.parallel_result
+
+        # Winner banner
+        console.print(Panel(
+            f"[bold green]Winner: {pr.winner}[/bold green]",
+            title="[bold]Parallel Exploration[/bold]",
+            border_style="green",
+        ))
+
+        # Voting table
+        if pr.votes:
+            vote_table = Table(title="Consensus Votes")
+            vote_table.add_column("Voter", style="cyan")
+            vote_table.add_column("Voted For", style="bold")
+            for voter, voted_for in pr.votes.items():
+                style = "bold green" if voted_for == pr.winner else ""
+                vote_table.add_row(voter, Text(voted_for, style=style))
+            console.print(vote_table)
+            console.print()
+
+        # Cross-review scores
+        if pr.scores:
+            score_table = Table(title="Cross-Review Scores", show_lines=True)
+            score_table.add_column("Reviewer", style="cyan")
+            score_table.add_column("Reviewed")
+            score_table.add_column("Arch", justify="right")
+            score_table.add_column("Impl", justify="right")
+            score_table.add_column("Quality", justify="right")
+            score_table.add_column("Total", justify="right", style="bold")
+            for reviewer, targets in pr.scores.items():
+                for reviewed, scores in targets.items():
+                    total = sum(scores.values())
+                    score_table.add_row(
+                        reviewer, reviewed,
+                        str(scores.get("architecture", "-")),
+                        str(scores.get("implementation", "-")),
+                        str(scores.get("quality", "-")),
+                        str(total),
+                    )
+            console.print(score_table)
+            console.print()
+
+    # Debate mode results
+    if isinstance(getattr(result, 'debate_result', None), DebateResult):
+        dr = result.debate_result
+
+        console.print(Panel(
+            f"[bold]Judge:[/bold] {dr.judge_model}\n"
+            f"[bold]Debaters:[/bold] {', '.join(dr.proposals.keys())}",
+            title="[bold]Structured Debate[/bold]",
+            border_style="blue",
+        ))
+
+        # Judgment preview
+        if dr.judgment:
+            preview = dr.judgment[:500]
+            if len(dr.judgment) > 500:
+                preview += "..."
+            console.print(Panel(
+                preview,
+                title="[bold]Judgment[/bold]",
+                border_style="green",
+            ))
+            console.print()
 
     # Routing decisions
     if result.routing_decisions:

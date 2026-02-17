@@ -617,3 +617,232 @@ class TestWriter:
 
         # Should still create the directory structure
         assert (Path(actual_path) / "summary.md").is_file()
+
+
+# ── CLI Parallel Display Tests ───────────────────────────────────
+
+
+class TestCliParallelDisplay:
+    """Tests for _display_result showing parallel mode results."""
+
+    def _make_parallel_result(self, **overrides):
+        """Create a PipelineResult with parallel_result populated."""
+        from triad.schemas.consensus import ParallelResult
+
+        pr = ParallelResult(
+            individual_outputs={
+                "model-a": "Solution A",
+                "model-b": "Solution B",
+                "model-c": "Solution C",
+            },
+            scores={
+                "model-a": {
+                    "model-b": {"architecture": 8, "implementation": 7, "quality": 9},
+                    "model-c": {"architecture": 6, "implementation": 5, "quality": 6},
+                },
+                "model-b": {
+                    "model-a": {"architecture": 7, "implementation": 7, "quality": 7},
+                    "model-c": {"architecture": 5, "implementation": 6, "quality": 5},
+                },
+                "model-c": {
+                    "model-a": {"architecture": 8, "implementation": 8, "quality": 7},
+                    "model-b": {"architecture": 6, "implementation": 7, "quality": 6},
+                },
+            },
+            votes={"model-a": "model-b", "model-b": "model-a", "model-c": "model-a"},
+            winner="model-a",
+            synthesized_output="Final synthesized code output",
+        )
+
+        defaults = {
+            "session_id": "test-parallel-session",
+            "task": _make_task(),
+            "config": _make_config(pipeline_mode="parallel"),
+            "stages": {},
+            "arbiter_reviews": [],
+            "routing_decisions": [],
+            "total_cost": 0.50,
+            "total_tokens": 12000,
+            "duration_seconds": 30.0,
+            "success": True,
+            "parallel_result": pr,
+        }
+        defaults.update(overrides)
+        return PipelineResult(**defaults)
+
+    def test_parallel_run_shows_winner(self):
+        """triad run with parallel result shows winner banner."""
+        mock_result = self._make_parallel_result()
+
+        with (
+            patch("triad.cli.asyncio.run", return_value=mock_result),
+            patch("triad.output.writer.write_pipeline_output"),
+        ):
+            result = runner.invoke(app, [
+                "run", "Build API",
+                "--mode", "parallel",
+                "--arbiter", "off",
+                "--no-persist",
+            ])
+
+        assert result.exit_code == 0
+        assert "model-a" in result.output
+
+    def test_parallel_run_shows_votes(self):
+        """triad run with parallel result shows voting table."""
+        mock_result = self._make_parallel_result()
+
+        with (
+            patch("triad.cli.asyncio.run", return_value=mock_result),
+            patch("triad.output.writer.write_pipeline_output"),
+        ):
+            result = runner.invoke(app, [
+                "run", "Build API",
+                "--mode", "parallel",
+                "--arbiter", "off",
+                "--no-persist",
+            ])
+
+        assert result.exit_code == 0
+        # The output should contain voter and voted-for
+        assert "Consensus Votes" in result.output or "model-b" in result.output
+
+    def test_parallel_run_shows_cost(self):
+        """triad run with parallel result shows cost summary."""
+        mock_result = self._make_parallel_result()
+
+        with (
+            patch("triad.cli.asyncio.run", return_value=mock_result),
+            patch("triad.output.writer.write_pipeline_output"),
+        ):
+            result = runner.invoke(app, [
+                "run", "Build API",
+                "--mode", "parallel",
+                "--arbiter", "off",
+                "--no-persist",
+            ])
+
+        assert result.exit_code == 0
+        assert "$0.5000" in result.output
+
+
+# ── CLI Debate Display Tests ─────────────────────────────────────
+
+
+class TestCliDebateDisplay:
+    """Tests for _display_result showing debate mode results."""
+
+    def _make_debate_result(self, **overrides):
+        """Create a PipelineResult with debate_result populated."""
+        from triad.schemas.consensus import DebateResult
+
+        dr = DebateResult(
+            proposals={
+                "model-a": "Proposal from A: use microservices",
+                "model-b": "Proposal from B: use monolith",
+                "model-c": "Proposal from C: use serverless",
+            },
+            rebuttals={
+                "model-a": {"model-b": "B is too simple", "model-c": "C is too complex"},
+                "model-b": {"model-a": "A is overengineered", "model-c": "C has cold starts"},
+                "model-c": {"model-a": "A is fragile", "model-b": "B doesn't scale"},
+            },
+            final_arguments={
+                "model-a": "Final from A",
+                "model-b": "Final from B",
+                "model-c": "Final from C",
+            },
+            judgment="After careful consideration, model-a's approach wins.",
+            judge_model="model-c",
+        )
+
+        defaults = {
+            "session_id": "test-debate-session",
+            "task": _make_task(),
+            "config": _make_config(pipeline_mode="debate"),
+            "stages": {},
+            "arbiter_reviews": [],
+            "routing_decisions": [],
+            "total_cost": 0.75,
+            "total_tokens": 18000,
+            "duration_seconds": 60.0,
+            "success": True,
+            "debate_result": dr,
+        }
+        defaults.update(overrides)
+        return PipelineResult(**defaults)
+
+    def test_debate_run_shows_judge(self):
+        """triad run with debate result shows judge model."""
+        mock_result = self._make_debate_result()
+
+        with (
+            patch("triad.cli.asyncio.run", return_value=mock_result),
+            patch("triad.output.writer.write_pipeline_output"),
+        ):
+            result = runner.invoke(app, [
+                "run", "Build API",
+                "--mode", "debate",
+                "--arbiter", "off",
+                "--no-persist",
+            ])
+
+        assert result.exit_code == 0
+        assert "model-c" in result.output
+
+    def test_debate_run_shows_judgment(self):
+        """triad run with debate result shows judgment preview."""
+        mock_result = self._make_debate_result()
+
+        with (
+            patch("triad.cli.asyncio.run", return_value=mock_result),
+            patch("triad.output.writer.write_pipeline_output"),
+        ):
+            result = runner.invoke(app, [
+                "run", "Build API",
+                "--mode", "debate",
+                "--arbiter", "off",
+                "--no-persist",
+            ])
+
+        assert result.exit_code == 0
+        assert "careful consideration" in result.output
+
+    def test_debate_run_shows_cost(self):
+        """triad run with debate result shows cost summary."""
+        mock_result = self._make_debate_result()
+
+        with (
+            patch("triad.cli.asyncio.run", return_value=mock_result),
+            patch("triad.output.writer.write_pipeline_output"),
+        ):
+            result = runner.invoke(app, [
+                "run", "Build API",
+                "--mode", "debate",
+                "--arbiter", "off",
+                "--no-persist",
+            ])
+
+        assert result.exit_code == 0
+        assert "$0.7500" in result.output
+
+    def test_debate_halted_shows_halt_reason(self):
+        """triad run with halted debate shows halt reason."""
+        mock_result = self._make_debate_result(
+            success=False, halted=True,
+            halt_reason="Debate judgment fundamentally flawed",
+        )
+
+        with (
+            patch("triad.cli.asyncio.run", return_value=mock_result),
+            patch("triad.output.writer.write_pipeline_output"),
+        ):
+            result = runner.invoke(app, [
+                "run", "Build API",
+                "--mode", "debate",
+                "--arbiter", "bookend",
+                "--no-persist",
+            ])
+
+        assert result.exit_code == 0
+        assert "HALTED" in result.output
