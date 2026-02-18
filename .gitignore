@@ -15,6 +15,9 @@ build/
 triad/config/domain/
 config/domain/
 
+# Claude Code
+.claude/
+
 # IDE
 .vscode/
 .idea/

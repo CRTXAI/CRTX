@@ -115,7 +115,7 @@ v0.4 — Conversational Interface
   The audience expands from developers to everyone.
 
 v0.5 — Project Continuity
-  Triad remembers your project across sessions. It knows what
+  Triad maintains project context across sessions. It tracks what
   you've built, what decisions were made, and what's next.
   Long-running projects with evolving requirements. This is
   where the platform becomes indispensable.

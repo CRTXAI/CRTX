@@ -7,7 +7,7 @@
 <!-- <p align="center"><img src="assets/demo.gif" alt="CRTX CLI demo" width="700"/></p> -->
 
 <p align="center">
-  <strong>Multi-model AI that learns your codebase.</strong>
+  <strong>Multi-model AI orchestration for code generation — route tasks through specialized LLM agents with consensus, adversarial review, and an independent Arbiter layer.</strong>
 </p>
 
 <p align="center">
@@ -227,41 +227,6 @@ No preset flag defaults to `balanced`. If you manually change mode/route/arbiter
 
 ---
 
-## Presets
-
-Most users never need to touch `--mode`, `--route`, or `--arbiter` directly. Presets bundle them:
-
-| Preset | Mode | Routing | Arbiter | Use Case |
-|--------|------|---------|---------|----------|
-| **balanced** (default) | sequential | hybrid | bookend | Standard development. Best cost/quality balance. |
-| **fast** | sequential | speed-first | off | Rapid iteration. Cheapest models, no review. |
-| **cheap** | sequential | cost-optimized | off | Budget-conscious. Cheapest models above fitness threshold. |
-| **thorough** | sequential | quality-first | full | Critical features. Best models, every stage reviewed. |
-| **explore** | parallel | hybrid | bookend | Fan out to 3+ models, cross-review, synthesize the best. |
-| **debate** | debate | quality-first | full | Structured debate between models. Architecture decisions. |
-
-```bash
-crtx run "Build a REST API" --preset explore
-crtx run "Build a REST API" --preset fast
-crtx run "Build a REST API"                    # balanced (default)
-```
-
-Presets are starting points — override any part:
-```bash
-crtx run "Build a REST API" --preset explore --arbiter full
-```
-
-In the REPL:
-```
-crtx [balanced] ▸ preset explore
-  Mode set to parallel, route hybrid, arbiter bookend
-
-crtx [explore] ▸ preset fast
-  Mode set to sequential, route speed-first, arbiter off
-```
-
----
-
 | Mode | How It Works | Best For |
 |------|-------------|----------|
 | **Sequential** (default) | Architect → Implement → Refactor → Verify, each building on the last | Standard development, most tasks |
@@ -433,16 +398,18 @@ CRTX isn't a research project. It's a production tool that we bet our own codeba
 
 ## Cost
 
-CRTX adds model calls, which cost tokens. Here's what a typical task looks like:
+CRTX adds model calls, which cost tokens. Here's what a typical task costs:
 
-| Configuration | Est. Cost per Task | Use Case |
-|--------------|-------------------|----------|
-| No Arbiter | ~$4.30 | Rapid iteration |
-| Final Only | ~$5.10 | Prototyping |
-| **Bookend (default)** | **~$5.80** | Standard development |
-| Full Arbiter | ~$7.30 | Critical features |
+| Preset | Est. Cost | Time | Use Case |
+|--------|-----------|------|----------|
+| fast | ~$0.15 | ~1 min | Quick iteration |
+| cheap | ~$0.20 | ~2 min | Budget-conscious |
+| balanced (default) | ~$0.50 | ~4 min | Standard development |
+| thorough | ~$1.00 | ~5 min | Critical features |
+| explore | ~$1.50 | ~4 min | Multi-model parallel |
+| debate | ~$3.00 | ~8 min | Architecture decisions |
 
-At the default Bookend depth and ~15 tasks/week, the Arbiter adds about **$90/month**. One production bug it catches pays for a year of reviews.
+At the default Balanced preset and ~15 tasks/week, CRTX costs about **$30/month**. One production bug it catches pays for a year.
 
 ---
 

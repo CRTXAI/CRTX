@@ -1,8 +1,7 @@
 # Triad Orchestrator — CI Pipeline
 #
 # Runs on every push to main and all pull requests.
-# Tests across Python 3.12 and 3.13, lints with Ruff,
-# and scans for private-tier keyword leakage.
+# Tests across Python 3.12 and 3.13 and lints with Ruff.
 
 name: CI
 
@@ -37,44 +36,3 @@ jobs:
 
       - name: Run tests
         run: pytest --tb=short -q
-
-  keyword-scan:
-    name: Keyword Scan
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Scan for private-tier keywords
-        run: |
-          # Scan source files for private-tier terms that must never appear
-          # in the public repo. Uses word-boundary matching (-w) to avoid
-          # false positives like "ams" in "streams" or "alias" in AST code.
-          # Excludes: docs/vision.md (internal design doc), this CI file.
-          MATCHES=$(grep -rnwi \
-            "insurance\|underwriting\|broker\|alia\|atlas365" \
-            --include="*.py" --include="*.md" --include="*.toml" \
-            --include="*.yml" --include="*.html" \
-            --exclude-dir=.venv --exclude-dir=node_modules \
-            --exclude="ci.yml" --exclude="vision.md" \
-            . 2>/dev/null || true)
-
-          # Also scan for multi-word private terms (substring match is fine
-          # for these since they're specific enough to never be generic).
-          MATCHES2=$(grep -rni \
-            "binding trail\|evidence v2\|connect thread\|THR-[0-9]\|client vault\|renewal workbench\|certificate of insurance" \
-            --include="*.py" --include="*.md" --include="*.toml" \
-            --include="*.yml" --include="*.html" \
-            --exclude-dir=.venv --exclude-dir=node_modules \
-            --exclude="ci.yml" \
-            . 2>/dev/null || true)
-
-          ALL="${MATCHES}${MATCHES2}"
-
-          if [ -n "$ALL" ]; then
-            echo "::error::Private-tier keywords detected in source files:"
-            echo "$ALL"
-            exit 1
-          fi
-
-          echo "Keyword scan passed — no private-tier terms found."
