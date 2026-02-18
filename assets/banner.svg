@@ -140,17 +140,17 @@
     <animate attributeName="opacity" values="0.25;0" dur="2.5s" begin="0.8s" repeatCount="indefinite"/>
   </circle>
 
-  <!-- Text section (right portion) -->
-  <text x="500" y="170" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="72" font-weight="700" letter-spacing="14" fill="#00ffaa" opacity="0.92">CRTX</text>
-  <text x="503" y="215" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="14" font-weight="400" letter-spacing="6" fill="#00cc88" opacity="0.45">/k&#xF4;r'teks/</text>
+  <!-- Text section (right portion, centered on x=710) -->
+  <text x="710" y="170" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="90" font-weight="700" letter-spacing="16" fill="#00ffaa" opacity="0.95">CRTX</text>
+  <text x="710" y="215" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="16" font-weight="400" letter-spacing="6" fill="#00cc88" opacity="0.65">/k&#xF4;r'teks/</text>
 
   <!-- Separator line -->
-  <line x1="500" y1="232" x2="920" y2="232" stroke="#00ff88" stroke-width="0.5" opacity="0.15"/>
+  <line x1="500" y1="235" x2="920" y2="235" stroke="#00ff88" stroke-width="0.5" opacity="0.15"/>
 
-  <!-- Subtle descriptor badges (centered) -->
-  <rect x="600" y="275" width="80" height="24" rx="4" fill="none" stroke="#00ff66" stroke-width="0.8" opacity="0.3"/>
-  <text x="640" y="291" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="10" font-weight="400" letter-spacing="2" fill="#00ff66" opacity="0.6">ARBITER</text>
+  <!-- Descriptor badges (centered under CRTX at x=710) -->
+  <rect x="607" y="270" width="80" height="24" rx="4" fill="none" stroke="#00ff66" stroke-width="0.8" opacity="0.3"/>
+  <text x="647" y="286" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="10" font-weight="400" letter-spacing="2" fill="#00ff66" opacity="0.6">ARBITER</text>
 
-  <rect x="696" y="275" width="110" height="24" rx="4" fill="none" stroke="#44ddaa" stroke-width="0.8" opacity="0.3"/>
-  <text x="751" y="291" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="10" font-weight="400" letter-spacing="2" fill="#44ddaa" opacity="0.6">MULTI-MODEL</text>
+  <rect x="703" y="270" width="110" height="24" rx="4" fill="none" stroke="#44ddaa" stroke-width="0.8" opacity="0.3"/>
+  <text x="758" y="286" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="10" font-weight="400" letter-spacing="2" fill="#44ddaa" opacity="0.6">MULTI-MODEL</text>
 </svg>
