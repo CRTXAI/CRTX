@@ -401,11 +401,27 @@ def _setup_check() -> None:
         raise typer.Exit(1) from None
 
 
+# ── crtx demo ────────────────────────────────────────────────────
+
+
+@app.command()
+def demo(
+    yes: bool = typer.Option(
+        False, "--yes", "-y",
+        help="Skip confirmation prompt",
+    ),
+) -> None:
+    """Run a guided 60-second demo with cross-provider generation and review."""
+    from triad.demo import run_demo
+
+    asyncio.run(run_demo(console, skip_confirm=yes))
+
+
 # ── crtx run ─────────────────────────────────────────────────────
 
 @app.command()
 def run(
-    task: str = typer.Argument(..., help="Task description — what to build"),
+    task: str = typer.Argument("", help="Task description — what to build"),
     preset: str = typer.Option(
         None, "--preset", "-p",
         help="Pipeline preset: fast, balanced, thorough, explore, debate, cheap",
@@ -514,6 +530,24 @@ def run(
             "Run [bold]crtx setup[/bold] to get started."
         )
         raise typer.Exit(1) from None
+
+    if not task:
+        from triad.cli_display import is_interactive
+
+        if is_interactive():
+            console.print("[dim]No task specified.[/dim]\n")
+            if typer.confirm(
+                "Run the guided demo? (~60s, ~$0.15)", default=True,
+            ):
+                from triad.demo import run_demo
+
+                asyncio.run(run_demo(console, skip_confirm=True))
+                return
+            console.print("[dim]Tip: crtx run \"Build a REST API\"[/dim]")
+            raise typer.Exit(0) from None
+        else:
+            console.print("[red]Error:[/red] No task provided.")
+            raise typer.Exit(1) from None
 
     # Validate --apply requires --context-dir
     if apply and not context_dir:
@@ -1031,13 +1065,18 @@ def _display_completion(
         completion_markup += f"\n[dim]Output:[/dim] {output_path}/"
 
     if show_menu:
-        completion_markup += (
-            "\n\n[green]\\[s][/green] [dim]Summary[/dim]  "
+        menu_parts = (
+            "[green]\\[s][/green] [dim]Summary[/dim]  "
             "[green]\\[c][/green] [dim]Code[/dim]  "
             "[green]\\[r][/green] [dim]Reviews[/dim]  "
             "[green]\\[d][/green] [dim]Diffs[/dim]  "
-            "[green]\\[Enter][/green] [dim]Exit[/dim]"
         )
+        if getattr(result, "review_result", None):
+            menu_parts += "[green]\\[i][/green] [dim]Improve[/dim]  "
+        if getattr(result, "improve_result", None):
+            menu_parts += "[green]\\[a][/green] [dim]Apply[/dim]  "
+        menu_parts += "[green]\\[Enter][/green] [dim]Exit[/dim]"
+        completion_markup += "\n\n" + menu_parts
 
     import rich.box
     console.print()
@@ -2286,7 +2325,65 @@ def review_code(
     if interactive:
         from triad.post_run_viewer import PostRunViewer
 
-        viewer = PostRunViewer(console, Path(actual_path), pipeline_result)
+        # Compute context_dir from first source file
+        context_dir = str(Path(files[0]).resolve().parent)
+
+        def _improve_from_review(focus_text):
+            """Run improve pipeline using review findings as focus."""
+            try:
+                improve_config = PipelineConfig(
+                    pipeline_mode=PipelineMode.IMPROVE,
+                    arbiter_mode=arbiter_mode_val,
+                    default_timeout=timeout,
+                    routing_strategy=routing_strategy,
+                    arbiter_model=arbiter_model or base_config.arbiter_model,
+                    persist_sessions=not no_persist,
+                    session_db_path=base_config.session_db_path,
+                    context_dir=context_dir,
+                )
+                improve_task = TaskSpec(
+                    task=f"Improve this code with focus on: {focus_text}",
+                    context=source_code,
+                    output_dir=output_dir,
+                )
+                improve_emitter = PipelineEventEmitter()
+                _attach_dashboard_relay(improve_emitter)
+                mode_str = "improve"
+                improve_display = PipelineDisplay(
+                    console, mode_str, resolved_route, resolved_arbiter,
+                )
+                improve_emitter.add_listener(improve_display.create_listener())
+                with improve_display:
+                    imp_result = asyncio.run(
+                        run_pipeline(
+                            improve_task, improve_config, registry,
+                            improve_emitter,
+                        ),
+                    )
+                imp_path = write_pipeline_output(imp_result, output_dir)
+                _display_completion(imp_result, imp_path)
+                return (imp_result, imp_path)
+            except Exception as exc:
+                console.print(f"[red]Improve failed: {exc}[/red]")
+                return None
+
+        def _apply_improved(result):
+            """Apply improved code to source files."""
+            from triad.apply.engine import ApplyEngine
+            from triad.schemas.apply import ApplyConfig
+
+            apply_config = ApplyConfig(enabled=True, confirm=True)
+            engine = ApplyEngine(
+                result, apply_config, context_dir, console, True,
+            )
+            apply_result = engine.run()
+            _display_apply_result(apply_result)
+
+        viewer = PostRunViewer(
+            console, Path(actual_path), pipeline_result,
+            on_improve=_improve_from_review,
+            on_apply=_apply_improved,
+        )
         viewer.run()
 
 
@@ -2420,7 +2517,7 @@ def improve(
         arbiter_model=arbiter_model or base_config.arbiter_model,
         persist_sessions=not no_persist,
         session_db_path=base_config.session_db_path,
-        context_dir=context_dir if apply else None,
+        context_dir=context_dir,
     )
 
     task_spec = TaskSpec(
@@ -2489,7 +2586,22 @@ def improve(
     if interactive:
         from triad.post_run_viewer import PostRunViewer
 
-        viewer = PostRunViewer(console, Path(actual_path), pipeline_result)
+        def _apply_improved(result):
+            """Apply improved code to source files."""
+            from triad.apply.engine import ApplyEngine
+            from triad.schemas.apply import ApplyConfig
+
+            apply_config = ApplyConfig(enabled=True, confirm=True)
+            engine = ApplyEngine(
+                result, apply_config, context_dir, console, True,
+            )
+            ar = engine.run()
+            _display_apply_result(ar)
+
+        viewer = PostRunViewer(
+            console, Path(actual_path), pipeline_result,
+            on_apply=_apply_improved,
+        )
         viewer.run()
 
 

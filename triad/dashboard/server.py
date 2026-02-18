@@ -37,7 +37,13 @@ def create_app() -> Any:
     Returns the app instance. FastAPI is imported inside this function
     so the module can be imported without dashboard deps installed.
     """
+    # Suppress Windows ProactorEventLoop ConnectionResetError noise
+    import sys
+    _install_win32_handler = sys.platform == "win32"
+
     try:
+        from contextlib import asynccontextmanager
+
         from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
         from fastapi.middleware.cors import CORSMiddleware
         from fastapi.responses import FileResponse, HTMLResponse
@@ -47,9 +53,28 @@ def create_app() -> Any:
             "Install with: pip install crtx[dashboard]"
         ) from exc
 
+    @asynccontextmanager
+    async def _lifespan(app: FastAPI):  # noqa: ARG001
+        if _install_win32_handler:
+            import asyncio as _asyncio
+
+            loop = _asyncio.get_running_loop()
+
+            def _silence_connection_reset(
+                loop: _asyncio.AbstractEventLoop, context: dict,
+            ) -> None:
+                exc = context.get("exception")
+                if isinstance(exc, ConnectionResetError):
+                    return
+                loop.default_exception_handler(context)
+
+            loop.set_exception_handler(_silence_connection_reset)
+        yield
+
     app = FastAPI(
         title="CRTX Dashboard",
         description="Real-time pipeline visualization",
+        lifespan=_lifespan,
     )
 
     app.add_middleware(

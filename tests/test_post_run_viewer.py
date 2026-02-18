@@ -265,3 +265,174 @@ class TestRunLoop:
         with patch(_READ_KEY, side_effect=EOFError):
             result = viewer.run()
             assert result is None
+
+
+class TestImproveApplyOptions:
+    """Tests for the [i] Improve and [a] Apply menu options."""
+
+    def _make_review_result(self):
+        """Create a mock review_result with a synthesized_review."""
+        rr = MagicMock()
+        rr.synthesized_review = "Found security issues in auth module."
+        return rr
+
+    def _make_improve_result(self):
+        """Create a mock improve_result."""
+        return MagicMock()
+
+    def test_menu_shows_improve_when_review_result(self, session_dir, mock_result):
+        """[i] appears in menu when on_improve callback and review_result present."""
+        mock_result.review_result = self._make_review_result()
+        mock_result.improve_result = None
+        console = Console(quiet=True)
+        viewer = PostRunViewer(
+            console, session_dir, mock_result,
+            on_improve=lambda focus: None,
+        )
+        menu = viewer._build_menu()
+        assert "[i]" in menu
+        assert "[a]" not in menu
+
+    def test_menu_hides_improve_when_no_review_result(self, session_dir, mock_result):
+        """[i] absent when review_result is None."""
+        mock_result.review_result = None
+        mock_result.improve_result = None
+        console = Console(quiet=True)
+        viewer = PostRunViewer(
+            console, session_dir, mock_result,
+            on_improve=lambda focus: None,
+        )
+        menu = viewer._build_menu()
+        assert "[i]" not in menu
+
+    def test_menu_hides_improve_when_no_callback(self, session_dir, mock_result):
+        """[i] absent when on_improve not provided."""
+        mock_result.review_result = self._make_review_result()
+        mock_result.improve_result = None
+        console = Console(quiet=True)
+        viewer = PostRunViewer(console, session_dir, mock_result)
+        menu = viewer._build_menu()
+        assert "[i]" not in menu
+
+    def test_menu_shows_apply_when_improve_result(self, session_dir, mock_result):
+        """[a] appears in menu when on_apply callback and improve_result present."""
+        mock_result.review_result = None
+        mock_result.improve_result = self._make_improve_result()
+        console = Console(quiet=True)
+        viewer = PostRunViewer(
+            console, session_dir, mock_result,
+            on_apply=lambda result: None,
+        )
+        menu = viewer._build_menu()
+        assert "[a]" in menu
+        assert "[i]" not in menu
+
+    def test_menu_hides_apply_when_no_improve_result(self, session_dir, mock_result):
+        """[a] absent when improve_result is None."""
+        mock_result.review_result = None
+        mock_result.improve_result = None
+        console = Console(quiet=True)
+        viewer = PostRunViewer(
+            console, session_dir, mock_result,
+            on_apply=lambda result: None,
+        )
+        menu = viewer._build_menu()
+        assert "[a]" not in menu
+
+    def test_pressing_i_calls_improve_callback(self, session_dir, mock_result):
+        """Callback invoked with synthesized_review text, result swapped."""
+        mock_result.review_result = self._make_review_result()
+        mock_result.improve_result = None
+
+        new_result = MagicMock()
+        new_result.improve_result = self._make_improve_result()
+        new_result.review_result = None
+        new_path = str(session_dir / "improved")
+        (session_dir / "improved").mkdir()
+
+        callback = MagicMock(return_value=(new_result, new_path))
+        console = Console(quiet=True)
+        viewer = PostRunViewer(
+            console, session_dir, mock_result,
+            on_improve=callback,
+        )
+
+        with patch(_READ_KEY, side_effect=["i", "enter"]):
+            viewer.run()
+
+        callback.assert_called_once_with("Found security issues in auth module.")
+        assert viewer.result is new_result
+
+    def test_pressing_a_calls_apply_callback(self, session_dir, mock_result):
+        """Callback invoked with current result."""
+        mock_result.improve_result = self._make_improve_result()
+        mock_result.review_result = None
+
+        callback = MagicMock()
+        console = Console(quiet=True)
+        viewer = PostRunViewer(
+            console, session_dir, mock_result,
+            on_apply=callback,
+        )
+
+        with patch(_READ_KEY, side_effect=["a", "enter"]):
+            viewer.run()
+
+        callback.assert_called_once_with(mock_result)
+
+    def test_improve_then_apply_chain(self, session_dir, mock_result):
+        """Press i → a → enter: improve called, then apply with improved result."""
+        mock_result.review_result = self._make_review_result()
+        mock_result.improve_result = None
+
+        improved_result = MagicMock()
+        improved_result.improve_result = self._make_improve_result()
+        improved_result.review_result = None
+        new_path = str(session_dir / "improved")
+        (session_dir / "improved").mkdir()
+
+        improve_cb = MagicMock(return_value=(improved_result, new_path))
+        apply_cb = MagicMock()
+        console = Console(quiet=True)
+        viewer = PostRunViewer(
+            console, session_dir, mock_result,
+            on_improve=improve_cb,
+            on_apply=apply_cb,
+        )
+
+        with patch(_READ_KEY, side_effect=["i", "a", "enter"]):
+            viewer.run()
+
+        improve_cb.assert_called_once()
+        apply_cb.assert_called_once_with(improved_result)
+
+    def test_pressing_i_without_callback_is_noop(self, session_dir, mock_result):
+        """No crash when i pressed with no callback."""
+        mock_result.review_result = self._make_review_result()
+        mock_result.improve_result = None
+        console = Console(quiet=True)
+        viewer = PostRunViewer(console, session_dir, mock_result)
+
+        with patch(_READ_KEY, side_effect=["i", "enter"]):
+            result = viewer.run()
+            assert result is None
+        # result unchanged
+        assert viewer.result is mock_result
+
+    def test_improve_failure_keeps_original_result(self, session_dir, mock_result):
+        """When callback returns None, result unchanged."""
+        mock_result.review_result = self._make_review_result()
+        mock_result.improve_result = None
+
+        callback = MagicMock(return_value=None)
+        console = Console(quiet=True)
+        viewer = PostRunViewer(
+            console, session_dir, mock_result,
+            on_improve=callback,
+        )
+
+        with patch(_READ_KEY, side_effect=["i", "enter"]):
+            viewer.run()
+
+        callback.assert_called_once()
+        assert viewer.result is mock_result

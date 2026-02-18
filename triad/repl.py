@@ -26,7 +26,7 @@ console = Console()
 # Commands that are dispatched to CLI subcommands
 _CLI_COMMANDS = {
     "plan", "models", "estimate", "sessions", "config", "review", "dashboard",
-    "setup",
+    "setup", "demo",
 }
 
 # Session state commands

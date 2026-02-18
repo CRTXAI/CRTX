@@ -51,16 +51,36 @@ class PostRunViewer:
         console: Console,
         session_dir: Path,
         result: object,
+        *,
+        on_improve=None,
+        on_apply=None,
     ) -> None:
         self.console = console
         self.session_dir = session_dir
         self.result = result
+        self._on_improve = on_improve
+        self._on_apply = on_apply
+
+    def _build_menu(self) -> str:
+        """Build the menu string dynamically based on available actions."""
+        parts = [
+            "[green]\\[s][/] Summary",
+            "[green]\\[c][/] Code",
+            "[green]\\[r][/] Reviews",
+            "[green]\\[d][/] Diffs",
+        ]
+        if self._on_improve and getattr(self.result, "review_result", None):
+            parts.append("[green]\\[i][/] Improve")
+        if self._on_apply and getattr(self.result, "improve_result", None):
+            parts.append("[green]\\[a][/] Apply")
+        parts.append("[green]\\[Enter][/] Exit")
+        return "  ".join(parts)
 
     def run(self) -> str | None:
         """Main input loop. Returns when user presses Enter/q.
 
         Uses single-keypress reading (msvcrt on Windows, tty on Unix)
-        so the user can press s/c/r/d/Enter without typing + Enter.
+        so the user can press s/c/r/d/i/a/Enter without typing + Enter.
         The first iteration skips the menu banner because the completion
         panel already displays the key hints.
         """
@@ -69,11 +89,7 @@ class PostRunViewer:
         first = True
         while True:
             if not first:
-                self.console.print(
-                    "\n[green]\\[s][/] Summary  [green]\\[c][/] Code  "
-                    "[green]\\[r][/] Reviews  [green]\\[d][/] Diffs  "
-                    "[green]\\[Enter][/] Exit"
-                )
+                self.console.print("\n" + self._build_menu())
             first = False
 
             try:
@@ -91,6 +107,10 @@ class PostRunViewer:
                 self._show_reviews()
             elif key == "d":
                 self._show_diffs()
+            elif key == "i":
+                self._handle_improve()
+            elif key == "a":
+                self._handle_apply()
         return None
 
     def run_direct(self, view: str) -> None:
@@ -103,6 +123,37 @@ class PostRunViewer:
             self._show_reviews()
         elif view == "diffs":
             self._show_diffs()
+
+    # ── Improve / Apply handlers ────────────────────────────────────
+
+    def _handle_improve(self) -> None:
+        """Run the improve pipeline using review findings as focus."""
+        if not self._on_improve:
+            return
+        review_result = getattr(self.result, "review_result", None)
+        if not review_result or not review_result.synthesized_review:
+            self.console.print("[dim]No review findings to use as focus.[/dim]")
+            return
+
+        self.console.print("\n[bold blue]Running improvement pipeline...[/bold blue]")
+        outcome = self._on_improve(review_result.synthesized_review)
+        if outcome is None:
+            self.console.print("[red]Improvement pipeline failed.[/red]")
+            return
+
+        new_result, new_path = outcome
+        self.result = new_result
+        self.session_dir = Path(new_path)
+        self.console.print("[green]Improvement complete.[/green]")
+
+    def _handle_apply(self) -> None:
+        """Apply improved code to source files."""
+        if not self._on_apply:
+            return
+        if not getattr(self.result, "improve_result", None):
+            self.console.print("[dim]No improved code to apply.[/dim]")
+            return
+        self._on_apply(self.result)
 
     # ── Summary view ───────────────────────────────────────────────
 
