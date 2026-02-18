@@ -144,22 +144,13 @@
   <text x="500" y="170" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="72" font-weight="700" letter-spacing="14" fill="#00ffaa" opacity="0.92">CRTX</text>
   <text x="503" y="215" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="14" font-weight="400" letter-spacing="6" fill="#00cc88" opacity="0.45">/k&#xF4;r'teks/</text>
 
-  <!-- Tagline -->
-  <text x="503" y="275" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="18" font-weight="400" letter-spacing="1" fill="#00dd77" opacity="0.6">Every session smarter than the last.</text>
-
   <!-- Separator line -->
   <line x1="500" y1="232" x2="920" y2="232" stroke="#00ff88" stroke-width="0.5" opacity="0.15"/>
 
-  <!-- Subtle descriptor badges -->
-  <rect x="500" y="305" width="70" height="24" rx="4" fill="none" stroke="#00ffbb" stroke-width="0.8" opacity="0.3"/>
-  <text x="535" y="321" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="10" font-weight="400" letter-spacing="2" fill="#00ffbb" opacity="0.6">BRAIN</text>
+  <!-- Subtle descriptor badges (centered) -->
+  <rect x="600" y="275" width="80" height="24" rx="4" fill="none" stroke="#00ff66" stroke-width="0.8" opacity="0.3"/>
+  <text x="640" y="291" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="10" font-weight="400" letter-spacing="2" fill="#00ff66" opacity="0.6">ARBITER</text>
 
-  <rect x="586" y="305" width="80" height="24" rx="4" fill="none" stroke="#00ff66" stroke-width="0.8" opacity="0.3"/>
-  <text x="626" y="321" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="10" font-weight="400" letter-spacing="2" fill="#00ff66" opacity="0.6">ARBITER</text>
-
-  <rect x="682" y="305" width="90" height="24" rx="4" fill="none" stroke="#66ff88" stroke-width="0.8" opacity="0.3"/>
-  <text x="727" y="321" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="10" font-weight="400" letter-spacing="2" fill="#66ff88" opacity="0.6">MEMORY</text>
-
-  <rect x="788" y="305" width="110" height="24" rx="4" fill="none" stroke="#44ddaa" stroke-width="0.8" opacity="0.3"/>
-  <text x="843" y="321" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="10" font-weight="400" letter-spacing="2" fill="#44ddaa" opacity="0.6">MULTI-MODEL</text>
+  <rect x="696" y="275" width="110" height="24" rx="4" fill="none" stroke="#44ddaa" stroke-width="0.8" opacity="0.3"/>
+  <text x="751" y="291" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="10" font-weight="400" letter-spacing="2" fill="#44ddaa" opacity="0.6">MULTI-MODEL</text>
 </svg>

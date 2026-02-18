@@ -85,9 +85,6 @@ def render_full_logo(console: Console) -> None:
     pronun = Text()
     pronun.append("    /kôr'teks/", style=BRAND["dim"])
     console.print(pronun)
-    subtitle = Text()
-    subtitle.append("    Every session smarter than the last.", style=BRAND["dim"])
-    console.print(subtitle)
     console.print()
 
 
@@ -412,11 +409,16 @@ class PipelineDisplay:
         mode: str,
         route: str,
         arbiter: str,
+        *,
+        dashboard_url: str | None = None,
     ) -> None:
         self._console = console
         self._mode = mode
         self._route = route
         self._arbiter = arbiter
+        self._dashboard_url = dashboard_url
+        self._key_thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
         self._live: Live | None = None
         self._lock = threading.Lock()
 
@@ -761,9 +763,15 @@ class PipelineDisplay:
                 log_text.append(f"  {ts}  ", style=BRAND["dim"])
                 log_text.append(msg, style=style)
 
+        subtitle = (
+            "[dim blue]Press [bold]d[/bold] to open dashboard[/dim blue]"
+            if self._dashboard_url
+            else None
+        )
         return Panel(
             log_text,
             title=f"[{BRAND['dim']}]Activity Log[/{BRAND['dim']}]",
+            subtitle=subtitle,
             border_style=BRAND["dim"],
             padding=(0, 1),
         )
@@ -778,13 +786,32 @@ class PipelineDisplay:
             transient=True,
         )
         self._live.start()
+        # Start background key listener for dashboard hotkey
+        if self._dashboard_url:
+            self._key_thread = threading.Thread(
+                target=self._key_listener, daemon=True,
+            )
+            self._key_thread.start()
         return self._live
 
     def stop(self) -> None:
         """Stop the Rich Live display."""
+        self._stop_event.set()
         if self._live:
             self._live.stop()
             self._live = None
+
+    def _key_listener(self) -> None:
+        """Background thread: read keypresses and open dashboard on 'd'."""
+        while not self._stop_event.is_set():
+            try:
+                key = _read_key()
+            except (EOFError, KeyboardInterrupt, OSError):
+                break
+            if key == "d" and self._dashboard_url:
+                import webbrowser
+
+                webbrowser.open(self._dashboard_url)
 
     def update(self) -> None:
         """Refresh the Live display with current state."""

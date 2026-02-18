@@ -8,8 +8,6 @@ Requires the 'dashboard' optional dependency group:
     pip install crtx[dashboard]
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -82,7 +80,6 @@ def create_app() -> Any:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )

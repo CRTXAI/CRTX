@@ -497,5 +497,5 @@ Apache 2.0 — see [LICENSE](LICENSE) for details.
 ---
 
 <p align="center">
-  <sub>Built by <a href="https://github.com/triad-ai">TriadAI</a> — Every session smarter than the last.</sub>
+  <sub>Built by <a href="https://github.com/triad-ai">TriadAI</a></sub>
 </p>

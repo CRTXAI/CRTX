@@ -74,10 +74,10 @@ class TriadREPL:
 
                 self._dash_server = DashboardServer()
                 self._dash_server.start()
-                console.print("[dim]Dashboard: http://127.0.0.1:8420[/dim]")
-                import webbrowser
-
-                webbrowser.open("http://127.0.0.1:8420")
+                console.print(
+                    "[dim]Dashboard ready: http://127.0.0.1:8420  "
+                    "Press [bold]d[/bold] during pipeline to open[/dim]"
+                )
             except ImportError:
                 console.print("[yellow]Dashboard requires extra deps.[/yellow]")
 

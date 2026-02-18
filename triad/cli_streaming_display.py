@@ -210,11 +210,15 @@ class ScrollingPipelineDisplay:
         mode: str,
         route: str,
         arbiter: str,
+        *,
+        dashboard_url: str | None = None,
     ) -> None:
         self._console = console
         self._mode = mode
         self._route = route
         self._arbiter = arbiter
+        self._dashboard_url = dashboard_url
+        self._key_thread: threading.Thread | None = None
 
         # Stage tracking
         self._start_time = time.monotonic()
@@ -274,13 +278,35 @@ class ScrollingPipelineDisplay:
             f"\n[bold blue]Pipeline started[/bold blue] — "
             f"{self._mode} | {self._route} | arbiter={self._arbiter}\n"
         )
+        # Start background key listener for dashboard hotkey
+        if self._dashboard_url:
+            self._key_thread = threading.Thread(
+                target=self._key_listener, daemon=True,
+            )
+            self._key_thread.start()
         return self
 
     def __exit__(self, *args: object) -> None:
         """Stop the Rich Live status bar."""
+        # Signal key listener to stop (cancel_event doubles as stop signal)
+        self._cancel_event.set()
         if self._live:
             self._live.__exit__(*args)
             self._live = None
+
+    def _key_listener(self) -> None:
+        """Background thread: read keypresses and open dashboard on 'd'."""
+        from triad.cli_display import _read_key
+
+        while not self._cancel_event.is_set():
+            try:
+                key = _read_key()
+            except (EOFError, KeyboardInterrupt, OSError):
+                break
+            if key == "d" and self._dashboard_url:
+                import webbrowser
+
+                webbrowser.open(self._dashboard_url)
 
     def __rich__(self) -> Text:
         """Called by Rich Live at 4fps — returns the live renderable."""
@@ -462,6 +488,10 @@ class ScrollingPipelineDisplay:
             tok_rate = self._calculate_tok_rate()
             if tok_rate > 0:
                 bar.append(f"  {tok_rate:,.0f} tok/s", style="dim cyan")
+
+        # Dashboard hint
+        if self._dashboard_url:
+            bar.append("  [d] Dashboard", style="dim blue")
 
         return bar
 

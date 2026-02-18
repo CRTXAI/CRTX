@@ -699,10 +699,10 @@ def run(
             dash_server = DashboardServer(port=_DASHBOARD_PORT)
             dash_server.start()
             _active_dash_server = dash_server
-            console.print(f"[dim]Dashboard: http://127.0.0.1:{_DASHBOARD_PORT}[/dim]")
-            import webbrowser
-
-            webbrowser.open(f"http://127.0.0.1:{_DASHBOARD_PORT}")
+            console.print(
+                f"[dim]Dashboard ready: http://127.0.0.1:{_DASHBOARD_PORT}  "
+                "Press [bold]d[/bold] during pipeline to open[/dim]"
+            )
         except ImportError:
             console.print(
                 "[yellow]Dashboard requires extra deps.[/yellow] "
@@ -714,14 +714,15 @@ def run(
     else:
         _attach_dashboard_relay(emitter)
 
-    # Streaming display selection
-    use_streaming = (
-        interactive
-        and pipeline_mode == PipelineMode.SEQUENTIAL
-        and not no_stream
-    )
+    # Display selection — PipelineDisplay (multi-panel) for all modes
+    use_streaming = False
 
     stream_callback = None
+    dash_url = (
+        f"http://127.0.0.1:{_DASHBOARD_PORT}"
+        if _active_dash_server is not None
+        else None
+    )
 
     try:
         try:
@@ -729,7 +730,10 @@ def run(
                 try:
                     from triad.cli_streaming_display import ScrollingPipelineDisplay
 
-                    streaming_display = ScrollingPipelineDisplay(console, mode, route, arbiter)
+                    streaming_display = ScrollingPipelineDisplay(
+                        console, mode, route, arbiter,
+                        dashboard_url=dash_url,
+                    )
                     emitter.add_listener(streaming_display.create_listener())
                     stream_callback = streaming_display.create_stream_callback()
                     with streaming_display:
@@ -745,7 +749,10 @@ def run(
 
             if not use_streaming:
                 if interactive:
-                    display = PipelineDisplay(console, mode, route, arbiter)
+                    display = PipelineDisplay(
+                        console, mode, route, arbiter,
+                        dashboard_url=dash_url,
+                    )
                     emitter.add_listener(display.create_listener())
                     with display:
                         pipeline_result = asyncio.run(
