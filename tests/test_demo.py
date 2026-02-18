@@ -5,13 +5,26 @@ Covers model selection logic and CLI integration.
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
 
 from triad.cli import app
 from triad.demo import select_demo_models
+from triad.schemas.arbiter import (
+    ArbiterReview,
+    Issue,
+    IssueCategory,
+    Severity,
+    Verdict,
+)
+from triad.schemas.messages import (
+    AgentMessage,
+    MessageType,
+    PipelineStage,
+    TokenUsage,
+)
 from triad.schemas.pipeline import ModelConfig, RoleFitness
 
 runner = CliRunner()
@@ -73,6 +86,49 @@ def _registry_single_provider() -> dict[str, ModelConfig]:
             "ANTHROPIC_API_KEY",
         ),
     }
+
+
+def _make_agent_message(content: str = "def validate_email():\n    pass") -> AgentMessage:
+    """Build a mock AgentMessage returned by LiteLLMProvider.complete()."""
+    return AgentMessage(
+        from_agent=PipelineStage.IMPLEMENT,
+        to_agent=PipelineStage.VERIFY,
+        msg_type=MessageType.IMPLEMENTATION,
+        content=content,
+        confidence=0.9,
+        token_usage=TokenUsage(
+            prompt_tokens=500, completion_tokens=800, cost=0.03,
+        ),
+    )
+
+
+def _make_review(verdict: Verdict = Verdict.FLAG) -> ArbiterReview:
+    """Build a mock ArbiterReview."""
+    issues = []
+    if verdict != Verdict.APPROVE:
+        issues = [
+            Issue(
+                severity=Severity.CRITICAL,
+                category=IssueCategory.EDGE_CASE,
+                description="Regex doesn't handle Unicode domains",
+                suggestion="Use IDNA-aware validation",
+            ),
+            Issue(
+                severity=Severity.WARNING,
+                category=IssueCategory.LOGIC,
+                description="Plus-addressing test is wrong",
+            ),
+        ]
+    return ArbiterReview(
+        stage_reviewed=PipelineStage.IMPLEMENT,
+        reviewed_model="openai/gpt-4o-mini",
+        arbiter_model="anthropic/claude-sonnet-4-5",
+        verdict=verdict,
+        issues=issues,
+        confidence=0.87,
+        reasoning="The email validator has several edge-case issues.",
+        token_cost=0.04,
+    )
 
 
 # ── select_demo_models tests ──────────────────────────────────────
@@ -191,3 +247,121 @@ class TestDemoCLI:
             # Should exit 0 after declining
             assert result.exit_code == 0
             assert "demo" in result.output.lower() or "Tip" in result.output
+
+    def test_demo_skip_confirm(self, monkeypatch):
+        """--yes flag skips the Continue? prompt."""
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+
+        mock_msg = _make_agent_message()
+        mock_review = _make_review(Verdict.FLAG)
+
+        mock_provider = MagicMock()
+        mock_provider.complete = AsyncMock(return_value=mock_msg)
+
+        mock_engine = MagicMock()
+        mock_engine.review = AsyncMock(return_value=mock_review)
+
+        with (
+            patch("triad.keys.load_keys_env"),
+            patch("triad.providers.registry.load_models", return_value=_registry_two_providers()),
+            patch("triad.providers.litellm_provider.LiteLLMProvider", return_value=mock_provider),
+            patch("triad.arbiter.arbiter.ArbiterEngine", return_value=mock_engine),
+            patch("triad.output.writer.write_pipeline_output", return_value="crtx-output/test"),
+        ):
+            result = runner.invoke(app, ["demo", "--yes"])
+            # typer.confirm should NOT have been called
+            assert result.exit_code == 0
+            assert "Demo Complete" in result.output
+
+    def test_demo_reject_path(self, monkeypatch):
+        """Mock arbiter returning FLAG shows issues display."""
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+
+        mock_msg = _make_agent_message(
+            "def validate_email(email):\n"
+            "    import re\n"
+            "    return bool(re.match(r'^[a-zA-Z0-9]+@[a-zA-Z0-9]+\\.[a-z]+$', email))\n"
+            "\ndef test_basic():\n    assert validate_email('a@b.com')\n"
+        )
+        mock_review = _make_review(Verdict.FLAG)
+
+        mock_provider = MagicMock()
+        mock_provider.complete = AsyncMock(return_value=mock_msg)
+
+        mock_engine = MagicMock()
+        mock_engine.review = AsyncMock(return_value=mock_review)
+
+        with (
+            patch("triad.keys.load_keys_env"),
+            patch("triad.providers.registry.load_models", return_value=_registry_two_providers()),
+            patch("triad.providers.litellm_provider.LiteLLMProvider", return_value=mock_provider),
+            patch("triad.arbiter.arbiter.ArbiterEngine", return_value=mock_engine),
+            patch("triad.output.writer.write_pipeline_output", return_value="crtx-output/test"),
+        ):
+            result = runner.invoke(app, ["demo", "--yes"])
+            assert result.exit_code == 0
+            assert "FOUND ISSUES" in result.output
+            assert "Unicode" in result.output
+
+    def test_demo_approved_path(self, monkeypatch):
+        """Mock arbiter returning APPROVE shows approval display."""
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+
+        mock_msg = _make_agent_message()
+        mock_review = _make_review(Verdict.APPROVE)
+
+        mock_provider = MagicMock()
+        mock_provider.complete = AsyncMock(return_value=mock_msg)
+
+        mock_engine = MagicMock()
+        mock_engine.review = AsyncMock(return_value=mock_review)
+
+        with (
+            patch("triad.keys.load_keys_env"),
+            patch("triad.providers.registry.load_models", return_value=_registry_two_providers()),
+            patch("triad.providers.litellm_provider.LiteLLMProvider", return_value=mock_provider),
+            patch("triad.arbiter.arbiter.ArbiterEngine", return_value=mock_engine),
+            patch("triad.output.writer.write_pipeline_output", return_value="crtx-output/test"),
+        ):
+            result = runner.invoke(app, ["demo", "--yes"])
+            assert result.exit_code == 0
+            assert "APPROVED" in result.output
+
+    def test_demo_output_written(self, monkeypatch, tmp_path):
+        """Verify output files are written via write_pipeline_output."""
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+
+        mock_msg = _make_agent_message()
+        mock_review = _make_review(Verdict.FLAG)
+        output_dir = str(tmp_path / "demo-output")
+
+        mock_provider = MagicMock()
+        mock_provider.complete = AsyncMock(return_value=mock_msg)
+
+        mock_engine = MagicMock()
+        mock_engine.review = AsyncMock(return_value=mock_review)
+
+        mock_write = MagicMock(return_value=output_dir)
+
+        with (
+            patch("triad.keys.load_keys_env"),
+            patch("triad.providers.registry.load_models", return_value=_registry_two_providers()),
+            patch("triad.providers.litellm_provider.LiteLLMProvider", return_value=mock_provider),
+            patch("triad.arbiter.arbiter.ArbiterEngine", return_value=mock_engine),
+            patch("triad.output.writer.write_pipeline_output", mock_write),
+        ):
+            result = runner.invoke(app, ["demo", "--yes"])
+            assert result.exit_code == 0
+
+        # write_pipeline_output was called with a PipelineResult
+        mock_write.assert_called_once()
+        call_args = mock_write.call_args
+        pipeline_result = call_args[0][0]
+        assert pipeline_result.success is True
+        assert pipeline_result.total_cost > 0
+        assert len(pipeline_result.arbiter_reviews) == 1
+        assert PipelineStage.IMPLEMENT in pipeline_result.stages

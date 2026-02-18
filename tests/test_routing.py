@@ -386,23 +386,23 @@ class TestCostEstimation:
         config = _make_model_config(
             model="test-v1", cost_input=3.0, cost_output=15.0,
         )
-        # Architect (no context): (3000 + 500 + 0 + 0) input * $3/MTok
-        #                        + 3000 output * $15/MTok
+        # Architect (no context): (1500 + 500 + 0 + 0) input * $3/MTok
+        #                        + 1500 output * $15/MTok
         cost = _estimate_stage_cost(config, PipelineStage.ARCHITECT)
-        expected = (3_500 / 1_000_000) * 3.0 + (3_000 / 1_000_000) * 15.0
+        expected = (2_000 / 1_000_000) * 3.0 + (1_500 / 1_000_000) * 15.0
         assert abs(cost - expected) < 1e-10
 
     def test_estimate_stage_cost_with_context(self):
         config = _make_model_config(
             model="test-v1", cost_input=3.0, cost_output=15.0,
         )
-        # Refactor with 20K context: (3000 + 500 + 20000 + 8000) input
-        #                            + 5000 output
+        # Refactor with 20K context: (1500 + 500 + 20000 + 4000) input
+        #                            + 2000 output
         cost = _estimate_stage_cost(
             config, PipelineStage.REFACTOR,
             context_tokens=20_000, task_tokens=500,
         )
-        expected = (31_500 / 1_000_000) * 3.0 + (5_000 / 1_000_000) * 15.0
+        expected = (26_000 / 1_000_000) * 3.0 + (2_000 / 1_000_000) * 15.0
         assert abs(cost - expected) < 1e-10
 
     def test_estimate_cost_returns_all_stages(self):

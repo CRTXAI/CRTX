@@ -99,6 +99,10 @@ def main(
         callback=_version_callback,
         is_eager=True,
     ),
+    dashboard: bool = typer.Option(
+        False, "--dashboard",
+        help="Start live dashboard with the REPL",
+    ),
 ) -> None:
     """CRTX — multi-model AI orchestration with adversarial Arbiter review."""
     if ctx.invoked_subcommand is None:
@@ -106,7 +110,7 @@ def main(
         from triad.repl import TriadREPL
 
         render_full_logo(console)
-        TriadREPL().run()
+        TriadREPL(dashboard=dashboard).run()
 
 
 # ── Helpers ──────────────────────────────────────────────────────
@@ -140,6 +144,7 @@ def _verdict_style(verdict: str) -> str:
 
 
 _DASHBOARD_PORT = 8420
+_active_dash_server = None  # DashboardServer | None
 
 
 def _attach_dashboard_relay(emitter) -> None:
@@ -520,6 +525,10 @@ def run(
         False, "--no-stream",
         help="Disable streaming pipeline display",
     ),
+    dashboard: bool = typer.Option(
+        False, "--dashboard",
+        help="Start live dashboard in browser",
+    ),
 ) -> None:
     """Execute a pipeline run with the specified task and options."""
     from triad.keys import has_any_key
@@ -680,8 +689,30 @@ def run(
     if _pro_agent:
         emitter.add_listener(_pro_agent.create_listener())
 
-    # Relay events to local dashboard server (if running)
-    _attach_dashboard_relay(emitter)
+    # Start in-process dashboard server if --dashboard flag
+    global _active_dash_server
+    dash_server = None
+    if dashboard and _active_dash_server is None:
+        try:
+            from triad.dashboard.server import DashboardServer
+
+            dash_server = DashboardServer(port=_DASHBOARD_PORT)
+            dash_server.start()
+            _active_dash_server = dash_server
+            console.print(f"[dim]Dashboard: http://127.0.0.1:{_DASHBOARD_PORT}[/dim]")
+            import webbrowser
+
+            webbrowser.open(f"http://127.0.0.1:{_DASHBOARD_PORT}")
+        except ImportError:
+            console.print(
+                "[yellow]Dashboard requires extra deps.[/yellow] "
+                "pip install crtx\\[dashboard]"
+            )
+
+    if _active_dash_server is not None:
+        emitter.add_listener(_active_dash_server.create_listener())
+    else:
+        _attach_dashboard_relay(emitter)
 
     # Streaming display selection
     use_streaming = (
@@ -693,97 +724,103 @@ def run(
     stream_callback = None
 
     try:
-        if use_streaming:
-            try:
-                from triad.cli_streaming_display import ScrollingPipelineDisplay
+        try:
+            if use_streaming:
+                try:
+                    from triad.cli_streaming_display import ScrollingPipelineDisplay
 
-                streaming_display = ScrollingPipelineDisplay(console, mode, route, arbiter)
-                emitter.add_listener(streaming_display.create_listener())
-                stream_callback = streaming_display.create_stream_callback()
-                with streaming_display:
-                    pipeline_result = asyncio.run(
-                        run_pipeline(
-                            task_spec, config, registry, emitter,
-                            stream_callback=stream_callback,
-                        ),
-                    )
-            except ImportError:
-                # Fall back to standard display if streaming module not available
-                use_streaming = False
+                    streaming_display = ScrollingPipelineDisplay(console, mode, route, arbiter)
+                    emitter.add_listener(streaming_display.create_listener())
+                    stream_callback = streaming_display.create_stream_callback()
+                    with streaming_display:
+                        pipeline_result = asyncio.run(
+                            run_pipeline(
+                                task_spec, config, registry, emitter,
+                                stream_callback=stream_callback,
+                            ),
+                        )
+                except ImportError:
+                    # Fall back to standard display if streaming module not available
+                    use_streaming = False
 
-        if not use_streaming:
-            if interactive:
-                display = PipelineDisplay(console, mode, route, arbiter)
-                emitter.add_listener(display.create_listener())
-                with display:
-                    pipeline_result = asyncio.run(
-                        run_pipeline(task_spec, config, registry, emitter),
-                    )
-            else:
-                # Non-interactive: show static task panel + spinner
-                _display_task_panel(task_spec, config)
-                console.print()
-                with console.status("[bold blue]Running pipeline...", spinner="dots"):
-                    pipeline_result = asyncio.run(
-                        run_pipeline(task_spec, config, registry, emitter),
-                    )
-    except RuntimeError as exc:
-        console.print(Panel(
-            f"[bold red]{exc}[/bold red]\n\n"
-            "This usually means too many models failed authentication. "
-            "Run [bold]crtx setup --check[/bold] to verify your API keys, "
-            "or use [bold]--mode sequential[/bold] which only needs one provider.",
-            title="Pipeline Error",
-            border_style="red",
-        ))
-        raise typer.Exit(1) from None
+            if not use_streaming:
+                if interactive:
+                    display = PipelineDisplay(console, mode, route, arbiter)
+                    emitter.add_listener(display.create_listener())
+                    with display:
+                        pipeline_result = asyncio.run(
+                            run_pipeline(task_spec, config, registry, emitter),
+                        )
+                else:
+                    # Non-interactive: show static task panel + spinner
+                    _display_task_panel(task_spec, config)
+                    console.print()
+                    with console.status("[bold blue]Running pipeline...", spinner="dots"):
+                        pipeline_result = asyncio.run(
+                            run_pipeline(task_spec, config, registry, emitter),
+                        )
+        except RuntimeError as exc:
+            console.print(Panel(
+                f"[bold red]{exc}[/bold red]\n\n"
+                "This usually means too many models failed authentication. "
+                "Run [bold]crtx setup --check[/bold] to verify your API keys, "
+                "or use [bold]--mode sequential[/bold] which only needs one provider.",
+                title="Pipeline Error",
+                border_style="red",
+            ))
+            raise typer.Exit(1) from None
 
-    # Write output files
-    from triad.output.writer import write_pipeline_output
+        # Write output files
+        from triad.output.writer import write_pipeline_output
 
-    actual_path = write_pipeline_output(pipeline_result, output_dir)
+        actual_path = write_pipeline_output(pipeline_result, output_dir)
 
-    # Apply mode
-    if apply:
-        from triad.apply.engine import ApplyEngine
-        from triad.schemas.apply import ApplyConfig
+        # Apply mode
+        if apply:
+            from triad.apply.engine import ApplyEngine
+            from triad.schemas.apply import ApplyConfig
 
-        apply_config = ApplyConfig(
-            enabled=True,
-            confirm=confirm,
-            branch=branch,
-            apply_include=apply_include or [],
-            apply_exclude=apply_exclude or [],
-            rollback_on_fail=rollback_on_fail,
-            test_command=test_command,
-        )
-        engine = ApplyEngine(
-            pipeline_result, apply_config, context_dir, console, interactive,
-        )
-        apply_result = engine.run()
-        _display_apply_result(apply_result)
-
-    # Display completion panel with side-by-side tables + menu
-    _display_completion(pipeline_result, actual_path)
-
-    # Interactive post-run viewer (only in real terminals)
-    if interactive:
-        from triad.post_run_viewer import PostRunViewer
-
-        viewer = PostRunViewer(console, Path(actual_path), pipeline_result)
-        action = viewer.run()
-        if action == "rerun":
-            run(
-                task=task, mode=mode, route=route, arbiter=arbiter,
-                reconcile=reconcile, context=context, domain_rules=domain_rules,
-                timeout=timeout, max_retries=max_retries, no_persist=no_persist,
-                output_dir=output_dir, context_dir=context_dir, include=include,
-                exclude=exclude, context_budget=context_budget,
-                apply=apply, confirm=confirm, branch=branch,
-                apply_include=apply_include, apply_exclude=apply_exclude,
-                rollback_on_fail=rollback_on_fail, test_command=test_command,
-                no_stream=no_stream,
+            apply_config = ApplyConfig(
+                enabled=True,
+                confirm=confirm,
+                branch=branch,
+                apply_include=apply_include or [],
+                apply_exclude=apply_exclude or [],
+                rollback_on_fail=rollback_on_fail,
+                test_command=test_command,
             )
+            engine = ApplyEngine(
+                pipeline_result, apply_config, context_dir, console, interactive,
+            )
+            apply_result = engine.run()
+            _display_apply_result(apply_result)
+
+        # Display completion panel with side-by-side tables + menu
+        _display_completion(pipeline_result, actual_path)
+
+        # Interactive post-run viewer (only in real terminals)
+        if interactive:
+            from triad.post_run_viewer import PostRunViewer
+
+            viewer = PostRunViewer(console, Path(actual_path), pipeline_result)
+            action = viewer.run()
+            if action == "rerun":
+                run(
+                    task=task, mode=mode, route=route, arbiter=arbiter,
+                    reconcile=reconcile, context=context, domain_rules=domain_rules,
+                    timeout=timeout, max_retries=max_retries, no_persist=no_persist,
+                    output_dir=output_dir, context_dir=context_dir, include=include,
+                    exclude=exclude, context_budget=context_budget,
+                    apply=apply, confirm=confirm, branch=branch,
+                    apply_include=apply_include, apply_exclude=apply_exclude,
+                    rollback_on_fail=rollback_on_fail, test_command=test_command,
+                    no_stream=no_stream, dashboard=dashboard,
+                    arbiter_model=arbiter_model,
+                )
+    finally:
+        if dash_server is not None:
+            dash_server.shutdown()
+            _active_dash_server = None
 
 
 def _display_task_panel(task_spec: TaskSpec, config: PipelineConfig) -> None:
@@ -844,12 +881,21 @@ _VERDICT_COLORS = {
 
 
 def _display_completion(
-    result, output_path: str = "", show_menu: bool = True,
+    result,
+    output_path: str = "",
+    show_menu: bool = True,
+    *,
+    can_improve: bool = False,
+    can_apply: bool = False,
 ) -> None:
     """Display the completion panel with side-by-side tables.
 
     Shows routing decisions and arbiter verdicts side-by-side,
     followed by a green completion box with metrics and menu keys.
+
+    ``can_improve`` / ``can_apply`` control whether the [i] Improve
+    and [a] Apply menu items appear.  They should only be True when
+    the caller's PostRunViewer has corresponding callbacks.
     """
     import rich.box
     from rich.columns import Columns
@@ -998,13 +1044,18 @@ def _display_completion(
         tok_str = str(total_tokens)
 
     # Count unique models and stages
-    model_set = set()
+    model_set: set[str] = set()
     for d in result.routing_decisions:
         model_set.add(d.model_key)
-    model_count = len(model_set) or len(result.stages)
+    # Fallback: extract model keys from stage AgentMessages
+    if not model_set:
+        for msg in result.stages.values():
+            if getattr(msg, "model", None):
+                model_set.add(msg.model)
+    model_count = len(model_set) or len(result.stages) or 1
 
     # Parallel/debate modes: derive from result objects since stages/routing_decisions are empty
-    stage_count = len(result.stages)
+    stage_count = len(result.stages) or len(result.routing_decisions)
     if result.parallel_result and not stage_count:
         stage_count = len(result.parallel_result.individual_outputs) + 1  # fan-out + synthesis
         model_count = len(result.parallel_result.individual_outputs)
@@ -1071,9 +1122,9 @@ def _display_completion(
             "[green]\\[r][/green] [dim]Reviews[/dim]  "
             "[green]\\[d][/green] [dim]Diffs[/dim]  "
         )
-        if getattr(result, "review_result", None):
+        if can_improve and getattr(result, "review_result", None):
             menu_parts += "[green]\\[i][/green] [dim]Improve[/dim]  "
-        if getattr(result, "improve_result", None):
+        if can_apply and getattr(result, "improve_result", None):
             menu_parts += "[green]\\[a][/green] [dim]Apply[/dim]  "
         menu_parts += "[green]\\[Enter][/green] [dim]Exit[/dim]"
         completion_markup += "\n\n" + menu_parts
@@ -2320,7 +2371,10 @@ def review_code(
     actual_path = write_pipeline_output(pipeline_result, output_dir)
 
     # Display completion + interactive viewer
-    _display_completion(pipeline_result, actual_path)
+    _display_completion(
+        pipeline_result, actual_path,
+        can_improve=True, can_apply=True,
+    )
 
     if interactive:
         from triad.post_run_viewer import PostRunViewer
@@ -2361,7 +2415,7 @@ def review_code(
                         ),
                     )
                 imp_path = write_pipeline_output(imp_result, output_dir)
-                _display_completion(imp_result, imp_path)
+                _display_completion(imp_result, imp_path, can_apply=True)
                 return (imp_result, imp_path)
             except Exception as exc:
                 console.print(f"[red]Improve failed: {exc}[/red]")
@@ -2581,7 +2635,7 @@ def improve(
         _display_apply_result(apply_result)
 
     # Display completion + interactive viewer
-    _display_completion(pipeline_result, actual_path)
+    _display_completion(pipeline_result, actual_path, can_apply=True)
 
     if interactive:
         from triad.post_run_viewer import PostRunViewer
@@ -2619,10 +2673,10 @@ def dashboard(
         help="Don't auto-open browser",
     ),
 ) -> None:
-    """Start the real-time pipeline dashboard server.
+    """Start the real-time pipeline dashboard server (standalone).
 
     Opens a browser with a live visualization of pipeline runs.
-    Run `crtx run --task "..."` in another terminal to see agents work.
+    Tip: Use `crtx run --dashboard` to start the dashboard alongside your pipeline.
 
     Requires: pip install crtx[dashboard]
     """
@@ -2642,8 +2696,8 @@ def dashboard(
         border_style="blue",
     ))
     console.print(
-        "[dim]Run [bold]crtx run --task \"...\"[/bold] in another terminal "
-        "to see real-time pipeline events.[/dim]"
+        "[dim]Tip: Use [bold]crtx run --dashboard[/bold] to start the dashboard "
+        "alongside your pipeline.[/dim]"
     )
 
     if not no_browser:
@@ -2654,7 +2708,23 @@ def dashboard(
     import uvicorn
 
     app_instance = create_app()
-    uvicorn.run(app_instance, host="0.0.0.0", port=port, log_level="warning")
+
+    # On Windows, uvicorn + ProactorEventLoop can leave the console in a
+    # broken state after Ctrl-C (no input echo, no line editing).  Save the
+    # console mode before starting and restore it in a finally block.
+    if sys.platform == "win32":
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        stdin_handle = kernel32.GetStdHandle(-10)  # STD_INPUT_HANDLE
+        old_mode = ctypes.c_uint32()
+        kernel32.GetConsoleMode(stdin_handle, ctypes.byref(old_mode))
+        try:
+            uvicorn.run(app_instance, host="0.0.0.0", port=port, log_level="warning")
+        finally:
+            kernel32.SetConsoleMode(stdin_handle, old_mode)
+    else:
+        uvicorn.run(app_instance, host="0.0.0.0", port=port, log_level="warning")
 
 
 # ── Entry point ──────────────────────────────────────────────────

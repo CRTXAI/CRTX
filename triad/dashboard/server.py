@@ -10,12 +10,14 @@ Requires the 'dashboard' optional dependency group:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Any
 
-from triad.dashboard.events import PipelineEvent, PipelineEventEmitter
+from triad.dashboard.events import EventListener, PipelineEvent, PipelineEventEmitter
 
 logger = logging.getLogger(__name__)
 
@@ -248,3 +250,72 @@ def create_app() -> Any:
             return {"error": "Failed to load configuration"}
 
     return app
+
+
+class DashboardServer:
+    """Run the dashboard in a background daemon thread."""
+
+    def __init__(self, port: int = 8420) -> None:
+        self._port = port
+        self._thread: threading.Thread | None = None
+        self._uvicorn_server: Any = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def start(self) -> None:
+        """Start uvicorn in daemon thread; block until ready."""
+        import time
+
+        import uvicorn
+
+        app = create_app()
+        config = uvicorn.Config(
+            app, host="127.0.0.1", port=self._port, log_level="warning",
+        )
+        self._uvicorn_server = uvicorn.Server(config)
+
+        def _run() -> None:
+            # Uvicorn on Windows requires SelectorEventLoop — the default
+            # ProactorEventLoop lacks transport APIs that the WebSocket
+            # protocol implementation depends on.
+            import sys
+
+            if sys.platform == "win32":
+                self._loop = asyncio.SelectorEventLoop()
+            else:
+                self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+            self._loop.run_until_complete(self._uvicorn_server.serve())
+
+        self._thread = threading.Thread(target=_run, daemon=True)
+        self._thread.start()
+
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            if self._uvicorn_server.started:
+                return
+            if not self._thread.is_alive():
+                logger.warning("Dashboard server thread exited unexpectedly")
+                return
+            time.sleep(0.05)
+        logger.warning("Dashboard server did not start within timeout")
+
+    def create_listener(self) -> EventListener:
+        """Return sync listener that forwards events to dashboard WebSocket clients."""
+        server_emitter = _emitter  # module-level global
+
+        def _forward(event: PipelineEvent) -> None:
+            server_emitter._history.append(event)
+            if self._loop is not None and not self._loop.is_closed():
+                for ln in server_emitter._listeners:
+                    if asyncio.iscoroutinefunction(ln):
+                        asyncio.run_coroutine_threadsafe(ln(event), self._loop)
+
+        return _forward
+
+    def shutdown(self) -> None:
+        """Stop uvicorn and join the background thread."""
+        if self._uvicorn_server is not None:
+            self._uvicorn_server.should_exit = True
+        if self._thread is not None:
+            self._thread.join(timeout=5.0)
+        self._loop = None

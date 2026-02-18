@@ -173,9 +173,9 @@ class TestWriterParallel:
 
         actual_path = write_pipeline_output(result, out_dir)
 
-        code_files = list(Path(actual_path, "code").glob("*"))
+        code_files = list(Path(actual_path, "code").rglob("*.py"))
         assert len(code_files) >= 1
-        # Check that the FastAPI app file was extracted
+        # Check that the FastAPI app file was extracted (may be nested)
         filenames = [f.name for f in code_files]
         assert "app.py" in filenames
 
@@ -186,7 +186,7 @@ class TestWriterParallel:
 
         actual_path = write_pipeline_output(result, out_dir)
 
-        test_files = list(Path(actual_path, "tests").glob("*"))
+        test_files = list(Path(actual_path, "tests").rglob("*.py"))
         assert len(test_files) >= 1
         filenames = [f.name for f in test_files]
         assert "test_app.py" in filenames
@@ -247,7 +247,7 @@ class TestWriterDebate:
 
         actual_path = write_pipeline_output(result, out_dir)
 
-        code_files = list(Path(actual_path, "code").glob("*"))
+        code_files = list(Path(actual_path, "code").rglob("*.py"))
         assert len(code_files) >= 1
         filenames = [f.name for f in code_files]
         assert "main.py" in filenames
@@ -259,7 +259,7 @@ class TestWriterDebate:
 
         actual_path = write_pipeline_output(result, out_dir)
 
-        test_files = list(Path(actual_path, "tests").glob("*"))
+        test_files = list(Path(actual_path, "tests").rglob("*.py"))
         assert len(test_files) >= 1
         filenames = [f.name for f in test_files]
         assert "test_service.py" in filenames
@@ -480,7 +480,7 @@ class TestWriterFallbackContent:
 
         actual_path = write_pipeline_output(result, out_dir)
 
-        code_files = list(Path(actual_path, "code").glob("*"))
+        code_files = list(Path(actual_path, "code").rglob("*.py"))
         filenames = [f.name for f in code_files]
         # Stage content should be used as final_content
         assert "from_stage.py" in filenames
@@ -492,7 +492,7 @@ class TestWriterFallbackContent:
 
         actual_path = write_pipeline_output(result, out_dir)
 
-        code_files = list(Path(actual_path, "code").glob("*"))
+        code_files = list(Path(actual_path, "code").rglob("*.py"))
         assert len(code_files) >= 1
 
     def test_debate_used_when_stages_empty(self, tmp_path):
@@ -502,7 +502,7 @@ class TestWriterFallbackContent:
 
         actual_path = write_pipeline_output(result, out_dir)
 
-        code_files = list(Path(actual_path, "code").glob("*"))
+        code_files = list(Path(actual_path, "code").rglob("*.py"))
         assert len(code_files) >= 1
 
 

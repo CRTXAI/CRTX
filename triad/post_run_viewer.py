@@ -386,8 +386,14 @@ class PostRunViewer:
             self._render_diff("\n".join(diff_lines))
         else:
             # Show the full refactor output as markdown
+            display = diff_content
+            if len(display) > 50_000:
+                display = (
+                    display[:50_000]
+                    + "\n\n... (truncated, see full output in session directory)"
+                )
             self.console.print(Panel(
-                Markdown(diff_content[:2000]),
+                Markdown(display),
                 title="[bold]Refactor Output[/bold]",
                 border_style="yellow",
                 box=rich.box.ROUNDED,

@@ -52,7 +52,7 @@ class TriadREPL:
     handlers.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, dashboard: bool = False) -> None:
         self.mode = "sequential"
         self.route = "hybrid"
         self.arbiter = "bookend"
@@ -62,33 +62,53 @@ class TriadREPL:
         # Cached provider health — populated once at startup
         # Maps env_var -> ("ok" | "degraded" | "error" | "none", detail)
         self._provider_health: dict[str, tuple[str, str]] = {}
+        # In-process dashboard server
+        self._dashboard = dashboard
+        self._dash_server: object | None = None
 
     def run(self) -> None:
         """Main REPL loop."""
+        if self._dashboard:
+            try:
+                from triad.dashboard.server import DashboardServer
+
+                self._dash_server = DashboardServer()
+                self._dash_server.start()
+                console.print("[dim]Dashboard: http://127.0.0.1:8420[/dim]")
+                import webbrowser
+
+                webbrowser.open("http://127.0.0.1:8420")
+            except ImportError:
+                console.print("[yellow]Dashboard requires extra deps.[/yellow]")
+
         self._check_providers()
         self._print_status_dashboard()
         self._print_quick_start()
 
-        while True:
-            try:
-                from triad.presets import format_prompt_tag
+        try:
+            while True:
+                try:
+                    from triad.presets import format_prompt_tag
 
-                tag = format_prompt_tag(self.mode, self.route, self.arbiter)
-                prompt_text = Text()
-                prompt_text.append("\ncrtx", style=BRAND["green"])
-                prompt_text.append(f" [{tag}]", style=BRAND["dim"])
-                prompt_text.append(" ▸ ", style=BRAND["mint"])
+                    tag = format_prompt_tag(self.mode, self.route, self.arbiter)
+                    prompt_text = Text()
+                    prompt_text.append("\ncrtx", style=BRAND["green"])
+                    prompt_text.append(f" [{tag}]", style=BRAND["dim"])
+                    prompt_text.append(" ▸ ", style=BRAND["mint"])
 
-                user_input = console.input(prompt_text).strip()
+                    user_input = console.input(prompt_text).strip()
 
-                if not user_input:
-                    continue
+                    if not user_input:
+                        continue
 
-                self._dispatch(user_input)
+                    self._dispatch(user_input)
 
-            except (KeyboardInterrupt, EOFError):
-                console.print(f"\n[{BRAND['dim']}]Goodbye.[/{BRAND['dim']}]")
-                break
+                except (KeyboardInterrupt, EOFError):
+                    console.print(f"\n[{BRAND['dim']}]Goodbye.[/{BRAND['dim']}]")
+                    break
+        finally:
+            if self._dash_server is not None:
+                self._dash_server.shutdown()
 
     def _check_providers(self) -> None:
         """Validate provider connectivity once and cache the results.
@@ -495,6 +515,9 @@ class TriadREPL:
             _pro_agent = ProAgent.from_config()
             if _pro_agent:
                 emitter.add_listener(_pro_agent.create_listener())
+
+            if self._dash_server is not None:
+                emitter.add_listener(self._dash_server.create_listener())
 
             # Try streaming display for sequential mode
             use_streaming = (

@@ -398,6 +398,121 @@ class TestCLIDashboard:
 # ══════════════════════════════════════════════════════════════════
 
 
+# ══════════════════════════════════════════════════════════════════
+# DashboardServer (in-process background server)
+# ══════════════════════════════════════════════════════════════════
+
+
+class TestDashboardServer:
+    """DashboardServer in-process background server tests."""
+
+    def test_dashboard_server_start_creates_thread(self):
+        pytest.importorskip("fastapi")
+        from triad.dashboard.server import DashboardServer
+
+        server = DashboardServer(port=18420)
+        try:
+            server.start()
+            assert server._thread is not None
+            assert server._thread.daemon is True
+            assert server._uvicorn_server.started
+        finally:
+            server.shutdown()
+
+    def test_dashboard_server_creates_forwarding_listener(self):
+        pytest.importorskip("fastapi")
+        from triad.dashboard.server import DashboardServer
+
+        server = DashboardServer(port=18421)
+        try:
+            server.start()
+            listener = server.create_listener()
+            assert callable(listener)
+            # Calling with a real event should not raise
+            event = PipelineEvent(type=EventType.PIPELINE_STARTED, data={"mode": "test"})
+            listener(event)
+        finally:
+            server.shutdown()
+
+    def test_dashboard_server_shutdown(self):
+        pytest.importorskip("fastapi")
+        from triad.dashboard.server import DashboardServer
+
+        server = DashboardServer(port=18422)
+        server.start()
+        assert server._thread is not None
+        assert server._thread.is_alive()
+
+        server.shutdown()
+        assert server._loop is None
+        # Thread should have exited (or be exiting)
+        assert not server._thread.is_alive()
+
+    def test_dashboard_flag_in_run_help(self):
+        from typer.testing import CliRunner
+
+        from triad.cli import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["run", "--help"])
+        assert result.exit_code == 0
+        assert "--dashboard" in result.output
+
+    def test_dashboard_server_serves_http(self):
+        """Verify the background server actually responds to HTTP requests."""
+        pytest.importorskip("fastapi")
+        import urllib.request
+
+        from triad.dashboard.server import DashboardServer
+
+        server = DashboardServer(port=18423)
+        try:
+            server.start()
+            response = urllib.request.urlopen(
+                "http://127.0.0.1:18423/api/config", timeout=5,  # noqa: S310
+            )
+            assert response.status == 200
+        finally:
+            server.shutdown()
+
+    def test_dashboard_server_forwards_events_to_history(self):
+        """Events forwarded by the listener appear in the server emitter history."""
+        pytest.importorskip("fastapi")
+        from triad.dashboard.server import DashboardServer, get_emitter
+
+        server = DashboardServer(port=18424)
+        try:
+            server.start()
+            emitter = get_emitter()
+            before = len(emitter.history)
+
+            listener = server.create_listener()
+            event = PipelineEvent(
+                type=EventType.STAGE_STARTED, data={"stage": "architect"},
+            )
+            listener(event)
+
+            assert len(emitter.history) == before + 1
+            assert emitter.history[-1].type == EventType.STAGE_STARTED
+        finally:
+            server.shutdown()
+
+    def test_run_without_dashboard_skips_server(self):
+        """Without --dashboard, DashboardServer is never instantiated."""
+        from typer.testing import CliRunner
+
+        from triad.cli import app
+
+        runner = CliRunner()
+        # Run with no task and non-interactive — exits early with error
+        runner.invoke(app, ["run"])
+        # DashboardServer should not have been imported/started
+        # (no dashboard flag means _active_dash_server stays None)
+        from triad.cli import _active_dash_server
+
+        assert _active_dash_server is None
+
+
 class TestModuleExports:
     """Verify dashboard module re-exports."""
 

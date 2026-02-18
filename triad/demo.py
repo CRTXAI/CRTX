@@ -13,7 +13,6 @@ import uuid
 import typer
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 
 from triad.schemas.arbiter import ArbiterReview, Verdict
 from triad.schemas.messages import (
@@ -31,11 +30,9 @@ from triad.schemas.pipeline import (
 # ── Constants ────────────────────────────────────────────────────
 
 DEMO_TASK = (
-    "Write a Python module `email_validator.py` that validates email addresses. "
-    "Include a function `is_valid_email(email: str) -> bool` that checks format "
-    "using a regex, rejects disposable domains (mailinator.com, tempmail.com, "
-    "throwaway.email), and normalises gmail dot-tricks. Add clear docstrings "
-    "and at least five unit tests."
+    "Write a Python function that validates email addresses using regex, "
+    "handles edge cases like plus-addressing and international domains, "
+    "and includes comprehensive test cases."
 )
 
 DEMO_SYSTEM_PROMPT = (
@@ -48,32 +45,21 @@ DEMO_SYSTEM_PROMPT = (
 
 DEMO_ANNOTATIONS = {
     "routing": (
-        "[bold]How CRTX picks models:[/bold] The registry lists every model "
-        "you have API keys for. CRTX chose the cheapest reachable model to "
-        "[italic]generate[/italic] the code, then picked an arbiter from a "
-        "[italic]different provider[/italic] to review it — cross-model "
-        "enforcement catches blind spots a single model would miss."
+        "Why different providers? Models from the same company share training "
+        "data and blind spots. Cross-provider review finds more bugs."
     ),
-    "generation": (
-        "[bold]Generation:[/bold] The generator writes code from scratch. "
-        "In a full pipeline this would be the IMPLEMENT stage, fed by an "
-        "ARCHITECT's design."
+    "generating": (
+        "The generator writes code like any AI coding tool. The difference "
+        "is what happens next."
     ),
-    "arbiter": (
-        "[bold]Arbiter review:[/bold] An independent model from a different "
-        "provider acts as an adversarial reviewer. It scores correctness, "
-        "security, and edge-case coverage, then issues a verdict: "
-        "[green]APPROVE[/green], [yellow]FLAG[/yellow], "
-        "[red]REJECT[/red], or [bold red]HALT[/bold red]."
+    "reviewing": (
+        "This is the key innovation: an independent model reviewing for bugs, "
+        "hallucinations, and security issues the generator can't see in its "
+        "own output."
     ),
-    "verdict": (
-        "[bold]What just happened:[/bold]\n"
-        "  1. CRTX selected two models from different providers\n"
-        "  2. Model A generated code for the task\n"
-        "  3. Model B reviewed it independently (cross-model enforcement)\n"
-        "  4. You got working code [italic]and[/italic] a quality verdict\n\n"
-        "A full [bold]crtx run[/bold] adds Architect → Implement → Refactor "
-        "→ Verify stages with arbiter checkpoints between each."
+    "complete": (
+        "This is what CRTX does at scale — multiple models generating, "
+        "reviewing, debating, and improving code."
     ),
 }
 
@@ -153,16 +139,19 @@ async def run_demo(
     console: Console,
     *,
     skip_confirm: bool = False,
-) -> None:
+) -> PipelineResult:
     """Run the guided 60-second demo flow.
 
     Steps:
         0. Pre-flight — load keys, select models, confirm
-        1. Routing annotation — show model table
+        1. Routing annotation — show model choices
         2. Generate code with cheap model
         3. Arbiter review from different provider
         4. Summary + next-steps
         5. Write output files
+
+    Returns:
+        The ``PipelineResult`` built from the demo run.
     """
     from triad.keys import load_keys_env
     from triad.providers.registry import load_models
@@ -177,25 +166,23 @@ async def run_demo(
         console.print(f"\n[red]Demo unavailable:[/red] {exc}\n")
         raise typer.Exit(1) from None
 
-    est_cost = (
-        (gen_cfg.cost_input + gen_cfg.cost_output) * 2 / 1_000_000
-        + (arb_cfg.cost_input + arb_cfg.cost_output) * 2 / 1_000_000
-    )
-
     console.print()
-    console.print(
-        Panel(
-            f"[bold]CRTX Demo[/bold] — generate code + cross-provider review\n\n"
-            f"  Generator : [cyan]{gen_cfg.display_name}[/cyan] ({gen_cfg.provider})\n"
-            f"  Arbiter   : [cyan]{arb_cfg.display_name}[/cyan] ({arb_cfg.provider})\n"
-            f"  Est. cost : [green]~${est_cost:.4f}[/green]",
-            title="[bold]60-Second Demo[/bold]",
-            border_style="bright_blue",
-        )
-    )
+    console.print(Panel(
+        (
+            "This demo runs a real multi-model pipeline to show\n"
+            "how CRTX catches bugs that single-model tools miss.\n"
+            "\n"
+            "[dim]Estimated cost:[/dim]  [bold]~$0.15[/bold]\n"
+            "[dim]Estimated time:[/dim]  [bold]~60 seconds[/bold]\n"
+            "[dim]Models:[/dim]          [bold]2[/bold] "
+            "(cheapest available from your providers)"
+        ),
+        title="[bold]CRTX Demo[/bold]",
+        border_style="bright_blue",
+    ))
 
     if not skip_confirm:
-        if not typer.confirm("\nProceed?", default=True):
+        if not typer.confirm("\nContinue?", default=True):
             raise typer.Exit(0) from None
 
     wall_start = time.time()
@@ -203,29 +190,22 @@ async def run_demo(
     total_tokens = 0
 
     # ── Step 1: Routing annotation ────────────────────────────
-    console.print(f"\n{DEMO_ANNOTATIONS['routing']}\n")
-
-    table = Table(title="Selected Models", show_header=True, header_style="bold")
-    table.add_column("Role", style="bold")
-    table.add_column("Model")
-    table.add_column("Provider")
-    table.add_column("Cost (per 1M tokens)", justify="right")
-    table.add_row(
-        "Generator",
-        gen_cfg.display_name,
-        gen_cfg.provider,
-        f"${gen_cfg.cost_input:.2f} in / ${gen_cfg.cost_output:.2f} out",
+    console.print(
+        f"\n[bold cyan]ROUTING[/bold cyan]\n"
+        f"  Generator: [bold]{gen_cfg.display_name}[/bold] "
+        f"({gen_cfg.provider}) — fast, cheap, good enough to build\n"
+        f"  Arbiter:   [bold]{arb_cfg.display_name}[/bold] "
+        f"({arb_cfg.provider}) — different provider, catches what "
+        f"{gen_cfg.display_name.split()[0]} misses\n\n"
+        f"  [dim]{DEMO_ANNOTATIONS['routing']}[/dim]"
     )
-    table.add_row(
-        "Arbiter",
-        arb_cfg.display_name,
-        arb_cfg.provider,
-        f"${arb_cfg.cost_input:.2f} in / ${arb_cfg.cost_output:.2f} out",
-    )
-    console.print(table)
 
     # ── Step 2: Generate code ─────────────────────────────────
-    console.print(f"\n{DEMO_ANNOTATIONS['generation']}\n")
+    console.print(
+        f"\n[bold yellow]GENERATING[/bold yellow] — "
+        f"{gen_cfg.display_name} is writing the code...\n"
+        f"  [dim]{DEMO_ANNOTATIONS['generating']}[/dim]"
+    )
 
     from triad.providers.litellm_provider import LiteLLMProvider
 
@@ -234,7 +214,7 @@ async def run_demo(
 
     gen_start = time.time()
     with console.status(
-        f"[bold cyan]Generating with {gen_cfg.display_name}...[/bold cyan]"
+        f"[bold cyan]Generating with {gen_cfg.display_name}...[/bold cyan]",
     ):
         msg = await gen_provider.complete(
             messages=[{"role": "user", "content": DEMO_TASK}],
@@ -251,26 +231,27 @@ async def run_demo(
     total_cost += gen_cost
     total_tokens += gen_tokens
 
-    # Show generation summary
-    preview_lines = msg.content.strip().splitlines()[:15]
-    preview = "\n".join(preview_lines)
-    if len(msg.content.strip().splitlines()) > 15:
-        preview += "\n[dim]... (truncated)[/dim]"
+    # Count lines and infer structure
+    content_lines = msg.content.strip().splitlines()
+    line_count = len(content_lines)
+    test_count = sum(
+        1 for ln in content_lines if ln.strip().startswith("def test_")
+    )
 
     console.print(
-        Panel(
-            f"[bold]Model:[/bold] {gen_cfg.display_name}\n"
-            f"[bold]Tokens:[/bold] {gen_tokens:,}  "
-            f"[bold]Cost:[/bold] ${gen_cost:.4f}  "
-            f"[bold]Time:[/bold] {gen_elapsed:.1f}s\n\n"
-            f"{preview}",
-            title="[bold green]Generation Complete[/bold green]",
-            border_style="green",
-        )
+        f"\n  [green]Generated:[/green] validate_email() + "
+        f"{test_count} test cases ({line_count} lines)\n"
+        f"  [dim]Cost so far: ${gen_cost:.4f} · "
+        f"{gen_tokens:,} tokens · {gen_elapsed:.1f}s[/dim]"
     )
 
     # ── Step 3: Arbiter review ────────────────────────────────
-    console.print(f"\n{DEMO_ANNOTATIONS['arbiter']}\n")
+    console.print(
+        f"\n[bold magenta]ARBITER REVIEW[/bold magenta] — "
+        f"{arb_cfg.display_name} is checking "
+        f"{gen_cfg.display_name}'s work...\n"
+        f"  [dim]({DEMO_ANNOTATIONS['reviewing']})[/dim]"
+    )
 
     from triad.arbiter.arbiter import ArbiterEngine
 
@@ -286,7 +267,7 @@ async def run_demo(
 
     arb_start = time.time()
     with console.status(
-        f"[bold cyan]Reviewing with {arb_cfg.display_name}...[/bold cyan]"
+        f"[bold cyan]Reviewing with {arb_cfg.display_name}...[/bold cyan]",
     ):
         review: ArbiterReview | None = await engine.review(
             stage=PipelineStage.IMPLEMENT,
@@ -298,49 +279,69 @@ async def run_demo(
 
     if review is not None:
         total_cost += review.token_cost
-        arb_tokens = int(review.token_cost / (arb_cfg.cost_output / 1_000_000))
-        total_tokens += arb_tokens
-        _display_verdict(console, review, arb_cfg, arb_elapsed)
-    else:
-        console.print(
-            Panel(
-                "[yellow]Arbiter review returned no result.[/yellow]\n"
-                "This can happen if the arbiter model is temporarily unavailable.",
-                title="[bold yellow]Review Skipped[/bold yellow]",
-                border_style="yellow",
+        # Estimate arbiter tokens from cost
+        if arb_cfg.cost_output > 0:
+            arb_tokens = int(
+                review.token_cost / (arb_cfg.cost_output / 1_000_000)
             )
+        else:
+            arb_tokens = 0
+        total_tokens += arb_tokens
+        _display_verdict(
+            console, review, gen_cfg, arb_cfg, arb_elapsed, total_cost,
         )
+    else:
+        console.print(Panel(
+            "[yellow]Arbiter review returned no result.[/yellow]\n"
+            "This can happen if the arbiter model is temporarily unavailable.",
+            title="[bold yellow]Review Skipped[/bold yellow]",
+            border_style="yellow",
+        ))
 
     # ── Step 4: Summary ───────────────────────────────────────
     wall_elapsed = time.time() - wall_start
 
-    console.print(f"\n{DEMO_ANNOTATIONS['verdict']}\n")
-
-    summary_table = Table(title="Demo Summary", show_header=False)
-    summary_table.add_column("Metric", style="bold")
-    summary_table.add_column("Value")
-    summary_table.add_row("Total cost", f"${total_cost:.4f}")
-    summary_table.add_row("Total tokens", f"{total_tokens:,}")
-    summary_table.add_row("Wall time", f"{wall_elapsed:.1f}s")
-    summary_table.add_row("Generator", f"{gen_cfg.display_name} ({gen_cfg.provider})")
-    summary_table.add_row("Arbiter", f"{arb_cfg.display_name} ({arb_cfg.provider})")
-    console.print(summary_table)
-
-    console.print(
-        Panel(
-            "[bold]Next steps:[/bold]\n\n"
-            "  [cyan]crtx run[/cyan] \"Build a REST API with FastAPI\"   "
-            "— full 4-stage pipeline\n"
-            "  [cyan]crtx run -p fast[/cyan] \"Create a CLI tool\"        "
-            "— speed-optimized preset\n"
-            "  [cyan]crtx run -p thorough[/cyan] \"Payment processor\"    "
-            "— maximum quality\n"
-            "  [cyan]crtx repl[/cyan]                                   "
-            "— interactive session",
-            title="[bold]What's Next?[/bold]",
-            border_style="bright_blue",
+    # Determine what-happened summary based on verdict
+    issue_count = len(review.issues) if review else 0
+    if review and review.verdict != Verdict.APPROVE:
+        what_happened = (
+            f"  1. {gen_cfg.display_name} generated an email validator\n"
+            f"  2. {arb_cfg.display_name} independently reviewed it\n"
+            f"  3. The review caught {issue_count} issue"
+            f"{'s' if issue_count != 1 else ''} the generator missed"
         )
-    )
+    else:
+        what_happened = (
+            f"  1. {gen_cfg.display_name} generated an email validator\n"
+            f"  2. {arb_cfg.display_name} independently reviewed it\n"
+            f"  3. The review found no critical issues this time"
+        )
+
+    console.print()
+    console.print(Panel(
+        (
+            f"[dim]Total cost:[/dim]  [bold]${total_cost:.2f}[/bold]\n"
+            f"[dim]Total time:[/dim]  [bold]{wall_elapsed:.0f} seconds[/bold]\n"
+            f"[dim]Tokens used:[/dim] [bold]{total_tokens:,}[/bold]\n"
+            "\n"
+            "[bold]What just happened:[/bold]\n"
+            f"{what_happened}\n"
+            "\n"
+            f"  {DEMO_ANNOTATIONS['complete']}\n"
+            "\n"
+            "[bold]Next steps:[/bold]\n"
+            '  [cyan]crtx run "your task"[/cyan]              '
+            "— run a full pipeline\n"
+            '  [cyan]crtx run "task" --preset explore[/cyan]  '
+            "— 3 models in parallel\n"
+            '  [cyan]crtx run "task" --preset debate[/cyan]   '
+            "— adversarial debate\n"
+            "  [cyan]crtx repl[/cyan]                         "
+            "— interactive session"
+        ),
+        title="[bold]Demo Complete[/bold]",
+        border_style="bright_blue",
+    ))
 
     # ── Step 5: Write output ──────────────────────────────────
     session_id = str(uuid.uuid4())
@@ -351,7 +352,7 @@ async def run_demo(
             "from_agent": PipelineStage.IMPLEMENT,
             "to_agent": PipelineStage.VERIFY,
             "msg_type": MessageType.IMPLEMENTATION,
-        }
+        },
     )
 
     result = PipelineResult(
@@ -369,66 +370,84 @@ async def run_demo(
     from triad.output.writer import write_pipeline_output
 
     output_path = write_pipeline_output(result, task_spec.output_dir)
-    console.print(f"\n[green]Output written to:[/green] [bold]{output_path}[/bold]\n")
+    console.print(
+        f"\n[dim]Output saved to[/dim] [bold]{output_path}/[/bold]\n"
+    )
+
+    return result
 
 
 def _display_verdict(
     console: Console,
     review: ArbiterReview,
+    gen_cfg: ModelConfig,
     arb_cfg: ModelConfig,
     elapsed: float,
+    total_cost: float,
 ) -> None:
     """Display the arbiter verdict with appropriate styling."""
     verdict = review.verdict
     confidence = review.confidence
 
     if verdict == Verdict.APPROVE:
-        style = "green"
-        icon = "APPROVED"
-    elif verdict == Verdict.FLAG:
+        # ── Approve path ──────────────────────────────────────
+        console.print(Panel(
+            (
+                f"{arb_cfg.display_name} reviewed "
+                f"{gen_cfg.display_name}'s code and found\n"
+                "no critical issues. This happens sometimes — the\n"
+                "generator got it right. But when it doesn't, the\n"
+                "Arbiter catches it. Run [bold]crtx run[/bold] on a "
+                "complex task\nto see the full pipeline in action."
+            ),
+            title="[bold green]ARBITER APPROVED[/bold green]",
+            border_style="green",
+        ))
+        return
+
+    # ── Flag / Reject / Halt path ─────────────────────────────
+    if verdict == Verdict.FLAG:
         style = "yellow"
-        icon = "FLAGGED"
+        title = "ARBITER FOUND ISSUES"
     elif verdict == Verdict.REJECT:
         style = "red"
-        icon = "REJECTED"
+        title = "ARBITER FOUND ISSUES"
     else:
         style = "bold red"
-        icon = "HALTED"
+        title = "ARBITER HALTED"
 
-    body_parts = [
-        f"[bold]Verdict:[/bold] [{style}]{icon}[/{style}]  "
-        f"(confidence: {confidence:.0%})",
-        f"[bold]Arbiter:[/bold] {arb_cfg.display_name}  "
-        f"[bold]Cost:[/bold] ${review.token_cost:.4f}  "
-        f"[bold]Time:[/bold] {elapsed:.1f}s",
+    body_parts: list[str] = [
+        f"[bold]Verdict:[/bold] [{style}]{verdict.value.upper()}"
+        f"[/{style}] · Confidence: {confidence:.0%}",
+        "",
+        f"{arb_cfg.display_name} found {len(review.issues)} issue"
+        f"{'s' if len(review.issues) != 1 else ''} in "
+        f"{gen_cfg.display_name}'s code:",
+        "",
     ]
 
-    if review.issues:
-        body_parts.append("")
-        body_parts.append("[bold]Issues:[/bold]")
-        for issue in review.issues:
-            sev_style = {
-                "critical": "red",
-                "warning": "yellow",
-                "suggestion": "dim",
-            }.get(issue.severity, "dim")
-            body_parts.append(
-                f"  [{sev_style}]{issue.severity.upper()}[/{sev_style}]: "
-                f"{issue.description}"
-            )
-
-    # Show a snippet of reasoning
-    reasoning_lines = review.reasoning.strip().splitlines()[:5]
-    if reasoning_lines:
-        body_parts.append("")
-        body_parts.append("[bold]Reasoning (excerpt):[/bold]")
-        for line in reasoning_lines:
-            body_parts.append(f"  [dim]{line}[/dim]")
-
-    console.print(
-        Panel(
-            "\n".join(body_parts),
-            title=f"[bold {style}]Arbiter Verdict: {icon}[/bold {style}]",
-            border_style=style,
+    for i, issue in enumerate(review.issues, 1):
+        sev_style = {
+            "critical": "red",
+            "warning": "yellow",
+            "suggestion": "dim",
+        }.get(issue.severity, "dim")
+        body_parts.append(
+            f"  {i}. [{sev_style}][{issue.severity}][/{sev_style}] "
+            f"{issue.description}"
         )
+        if issue.suggestion:
+            body_parts.append(f"     [dim]-> {issue.suggestion}[/dim]")
+
+    body_parts.append("")
+    body_parts.append(
+        "[dim]A single model missed these. The cross-model review\n"
+        f"caught them in {elapsed:.0f} seconds for "
+        f"${review.token_cost:.4f}.[/dim]"
     )
+
+    console.print(Panel(
+        "\n".join(body_parts),
+        title=f"[bold {style}]{title}[/bold {style}]",
+        border_style=style,
+    ))

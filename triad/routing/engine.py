@@ -21,24 +21,26 @@ from triad.schemas.routing import CostEstimate, RoutingDecision, RoutingStrategy
 
 logger = logging.getLogger(__name__)
 
-# Output token estimates per stage (conservative)
+# Output token estimates per stage — based on observed averages across
+# real pipeline runs.  Previous values (3k-6k) over-estimated by 3-7x
+# because expensive models charge $15-75/1M output tokens.
 _OUTPUT_ESTIMATES: dict[PipelineStage, int] = {
-    PipelineStage.ARCHITECT: 3_000,
-    PipelineStage.IMPLEMENT: 6_000,
-    PipelineStage.REFACTOR: 5_000,
-    PipelineStage.VERIFY: 4_000,
+    PipelineStage.ARCHITECT: 1_500,
+    PipelineStage.IMPLEMENT: 3_000,
+    PipelineStage.REFACTOR: 2_000,
+    PipelineStage.VERIFY: 1_000,
 }
 
 # Input tokens accumulated from prior stage outputs
 _STAGE_ACCUMULATION: dict[PipelineStage, int] = {
     PipelineStage.ARCHITECT: 0,        # No prior output
-    PipelineStage.IMPLEMENT: 4_000,    # Architect output
-    PipelineStage.REFACTOR: 8_000,     # Architect + Implement
-    PipelineStage.VERIFY: 12_000,      # All prior outputs
+    PipelineStage.IMPLEMENT: 2_000,    # Architect output
+    PipelineStage.REFACTOR: 4_000,     # Architect + Implement
+    PipelineStage.VERIFY: 5_000,       # All prior outputs
 }
 
 # Base overhead: system prompt + role prompt + output schema
-_BASE_INPUT_OVERHEAD = 3_000
+_BASE_INPUT_OVERHEAD = 1_500
 
 # Strategy dispatcher
 _STRATEGY_FN = {

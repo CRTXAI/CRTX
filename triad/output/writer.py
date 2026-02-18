@@ -85,7 +85,9 @@ def _extract_code_files(
     For parallel/debate modes (where result.stages is empty), extracts
     from synthesized_output or judgment respectively.
     """
-    # Track written filenames to avoid duplicates between passes
+    # Track written filepaths to avoid duplicates between passes.
+    # Uses the full relative path (not just basename) so that files
+    # like src/__init__.py and src/decorators/__init__.py are distinct.
     written: set[str] = set()
 
     # Regex for detecting substantive code (function/class definitions)
@@ -106,11 +108,12 @@ def _extract_code_files(
             ):
                 continue
             target = tests_dir if "test" in block.filepath.lower() else code_dir
-            filename = Path(block.filepath).name
-            file_path = target / filename
+            # Preserve full relative path so directory structure is kept
+            rel_path = _sanitise_filepath(block.filepath)
+            file_path = target / rel_path
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(block.content, encoding="utf-8")
-            written.add(filename)
+            written.add(rel_path)
 
     # Determine the final content to scan for code blocks
     # For sequential mode: last stage output
@@ -142,20 +145,36 @@ def _extract_code_files(
             continue
 
         if filepath_hint:
-            filename = Path(filepath_hint.strip()).name
+            rel_path = _sanitise_filepath(filepath_hint.strip())
         else:
             file_counter += 1
             ext = _language_extension(language)
-            filename = f"output_{file_counter}{ext}"
+            rel_path = f"output_{file_counter}{ext}"
 
         # Skip files already written by the first pass (code_blocks)
-        if filename in written:
+        if rel_path in written:
             continue
 
-        target = tests_dir if "test" in filename.lower() else code_dir
-        file_path = target / filename
+        target = tests_dir if "test" in rel_path.lower() else code_dir
+        file_path = target / rel_path
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(code, encoding="utf-8")
+
+
+def _sanitise_filepath(raw: str) -> str:
+    """Normalise a filepath hint into a safe relative path.
+
+    Strips leading ``./``, ``/``, and any path components that try to
+    escape the output directory (``..``).  Preserves subdirectory
+    structure so that ``src/decorators/__init__.py`` stays nested
+    rather than being flattened to ``__init__.py``.
+    """
+    p = Path(raw.replace("\\", "/"))
+    # Drop absolute roots and parent escapes
+    parts = [part for part in p.parts if part not in (".", "..", "/", "\\")]
+    if not parts:
+        return p.name or "output"
+    return str(Path(*parts))
 
 
 def _language_extension(language: str) -> str:
