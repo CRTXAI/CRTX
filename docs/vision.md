@@ -4,7 +4,7 @@
 
 *The intelligence layer between what you imagine and what gets built.*
 
-**NexusAI** | February 2026
+**TriadAI** | February 2026
 
 ---
 

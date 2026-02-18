@@ -4,7 +4,7 @@
 
 *Formalizing the pattern: never trust the builder to grade their own work.*
 
-**NexusAI** | Version 1.2 | February 2026
+**TriadAI** | Version 1.2 | February 2026
 
 ---
 

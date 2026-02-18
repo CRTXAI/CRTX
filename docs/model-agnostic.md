@@ -4,7 +4,7 @@
 
 *Any model with an API. Any role in the pipeline. Plug and play.*
 
-**NexusAI** | Version 1.1 | February 2026
+**TriadAI** | Version 1.1 | February 2026
 
 ---
 

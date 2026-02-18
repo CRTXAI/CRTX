@@ -2,7 +2,7 @@
 
 ## Multi-Model AI Development Platform
 
-**NexusAI** | Version 1.0 | February 2026
+**TriadAI** | Version 1.0 | February 2026
 
 ---
 

@@ -6,7 +6,7 @@
 
 *Ship everything. Ship it right. Give the community something worth forking.*
 
-**NexusAI** | February 2026
+**TriadAI** | February 2026
 
 ---
 
