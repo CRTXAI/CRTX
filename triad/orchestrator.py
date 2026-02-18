@@ -1008,10 +1008,60 @@ class ParallelOrchestrator:
             cost=fan_out_cost,
         )
 
-        if len(individual_outputs) < 2:
+        if len(individual_outputs) == 0:
+            await self._emit(
+                "error",
+                stage="parallel_fan_out",
+                error="All models failed during fan-out",
+            )
             raise RuntimeError(
-                f"Parallel mode requires at least 2 successful outputs, "
-                f"got {len(individual_outputs)}"
+                "Parallel mode: all models failed during fan-out"
+            )
+
+        if len(individual_outputs) == 1:
+            # Single-model fallback — skip cross-review/consensus/synthesis
+            sole_key = next(iter(individual_outputs))
+            sole_output = individual_outputs[sole_key]
+            logger.warning(
+                "Parallel fan-out: only %s succeeded, falling back to single-model output",
+                sole_key,
+            )
+            await self._emit(
+                "warning",
+                stage="parallel_fan_out",
+                message=f"Only {sole_key} succeeded — falling back to single-model output",
+            )
+            duration = time.monotonic() - start
+            total_cost = sum(
+                m.token_usage.cost for m in all_messages if m.token_usage
+            )
+            total_tokens = sum(
+                (m.token_usage.prompt_tokens + m.token_usage.completion_tokens)
+                for m in all_messages
+                if m.token_usage
+            )
+            await self._emit(
+                "pipeline_completed",
+                success=True,
+                total_cost=total_cost,
+                total_tokens=total_tokens,
+                duration=duration,
+            )
+            return PipelineResult(
+                task=self._task,
+                config=self._config,
+                total_cost=total_cost,
+                total_tokens=total_tokens,
+                duration_seconds=duration,
+                success=True,
+                arbiter_reviews=arbiter_reviews,
+                parallel_result=ParallelResult(
+                    individual_outputs=individual_outputs,
+                    scores={},
+                    votes={sole_key: sole_key},
+                    winner=sole_key,
+                    synthesized_output=sole_output,
+                ),
             )
 
         # Phase 2: Cross-review — each model scores the others
@@ -1098,20 +1148,29 @@ class ParallelOrchestrator:
             method=consensus_result.method,
         )
 
-        # Phase 5: Synthesis — winner enhances with best of others
-        logger.info("Parallel synthesis by %s", winner)
+        # Phase 5: Synthesis — merge winning output with best ideas from others.
+        # Uses GPT-4o (fast, strong instruction-following) instead of the
+        # winning model because synthesis is a structured merge task where
+        # speed matters more than depth.
+        synth_key = "gpt-4o"
+        synth_cfg = self._full_registry.get(synth_key)
+        if synth_cfg is None:
+            # Fallback to winner if GPT-4o not in registry
+            synth_key = winner
+            synth_cfg = self._registry[winner]
+        logger.info("Parallel synthesis by %s", synth_key)
         await self._emit(
             "stage_started",
             stage="parallel_synthesis",
-            model=winner,
+            model=synth_key,
         )
         winner_cfg = self._registry[winner]
         other_outputs = {
             k: v for k, v in individual_outputs.items() if k != winner
         }
         synth_msg = await self._call_model(
-            winner,
-            winner_cfg,
+            synth_key,
+            synth_cfg,
             "parallel_synthesize",
             timeout,
             winner_model=winner,
@@ -1125,12 +1184,15 @@ class ParallelOrchestrator:
         await self._emit(
             "stage_completed",
             stage="parallel_synthesis",
-            model=winner,
+            model=synth_key,
             duration=time.monotonic() - start,
             cost=synth_cost,
         )
 
-        # Phase 6: Arbiter review of synthesized output
+        # Phase 6: Arbiter review of synthesized output + retry on REJECT
+        _MAX_SYNTH_RETRIES = 2
+        final_reject = False
+
         if self._config.arbiter_mode != ArbiterMode.OFF:
             review = await self._arbiter.review(
                 stage=PipelineStage.VERIFY,
@@ -1140,6 +1202,66 @@ class ParallelOrchestrator:
             )
             if review is not None:
                 arbiter_reviews.append(review)
+
+                # Retry synthesis on REJECT with feedback injection
+                if review.verdict == Verdict.REJECT:
+                    for retry in range(1, _MAX_SYNTH_RETRIES + 1):
+                        logger.info(
+                            "Retrying parallel synthesis (attempt %d/%d) after REJECT",
+                            retry, _MAX_SYNTH_RETRIES,
+                        )
+                        feedback = format_arbiter_feedback(review, retry)
+                        await self._emit(
+                            "stage_started",
+                            stage="parallel_synthesis_retry",
+                            model=synth_key,
+                        )
+                        synth_msg = await self._call_model(
+                            synth_key,
+                            synth_cfg,
+                            "parallel_synthesize",
+                            timeout,
+                            winner_model=winner,
+                            winning_output=individual_outputs[winner],
+                            other_outputs=other_outputs,
+                            arbiter_feedback=feedback,
+                        )
+                        all_messages.append(synth_msg)
+                        synthesized_output = synth_msg.content
+
+                        retry_cost = synth_msg.token_usage.cost if synth_msg.token_usage else 0.0
+                        await self._emit(
+                            "stage_completed",
+                            stage="parallel_synthesis_retry",
+                            model=synth_key,
+                            duration=time.monotonic() - start,
+                            cost=retry_cost,
+                        )
+
+                        # Re-review the retried synthesis
+                        review = await self._arbiter.review(
+                            stage=PipelineStage.VERIFY,
+                            stage_model=winner_cfg.model,
+                            stage_output=synthesized_output,
+                            task=self._task,
+                        )
+                        if review is not None:
+                            arbiter_reviews.append(review)
+                            if review.verdict != Verdict.REJECT:
+                                break  # Passed or flagged — stop retrying
+                        else:
+                            break  # Arbiter unavailable — treat as passed
+
+                    # After all retries, check if still rejected
+                    final_reject = (
+                        review is not None
+                        and review.verdict == Verdict.REJECT
+                    )
+                    if final_reject:
+                        logger.warning(
+                            "Parallel synthesis still REJECTED after %d retries",
+                            _MAX_SYNTH_RETRIES,
+                        )
 
         # Build result
         duration = time.monotonic() - start
@@ -1722,6 +1844,10 @@ async def run_pipeline(
             task, config, registry, event_emitter,
         ).run()
     elif config.pipeline_mode == PipelineMode.DEBATE:
+        # Debate mode benefits from full arbiter review — every position
+        # paper and rebuttal should be reviewed, not just bookends.
+        if config.arbiter_mode == ArbiterMode.BOOKEND:
+            config = config.model_copy(update={"arbiter_mode": ArbiterMode.FULL})
         result = await DebateOrchestrator(
             task, config, registry, event_emitter,
         ).run()

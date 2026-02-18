@@ -186,15 +186,73 @@ class TestParallelFanOut:
         assert len(result.parallel_result.individual_outputs) == 3
         assert result.success is True
 
-    async def test_fewer_than_two_models_raises(self):
-        """Parallel mode needs at least 2 successful outputs."""
+    async def test_single_model_fallback(self):
+        """One model in registry → single-model fallback, not crash."""
         registry = {"model-a": _make_model_config()}
         responses = [_make_agent_message("only output")]
         mock_cls, _ = _mock_provider(responses)
 
+        with patch(_PROVIDER, mock_cls):
+            orch = ParallelOrchestrator(
+                task=_make_task(),
+                config=PipelineConfig(
+                    pipeline_mode="parallel", arbiter_mode="off",
+                ),
+                registry=registry,
+            )
+            result = await orch.run()
+
+        assert result.success is True
+        pr = result.parallel_result
+        assert pr is not None
+        assert pr.winner == "model-a"
+        assert pr.synthesized_output == "only output\n\nCONFIDENCE: 0.85"
+        assert pr.scores == {}
+        assert pr.votes == {"model-a": "model-a"}
+
+    async def test_two_of_three_fail_single_model_fallback(self):
+        """If 2 of 3 models fail in fan-out, fallback to the sole survivor."""
+        registry = _make_three_model_registry()
+        # First call succeeds, next two fail
+        responses = [
+            _make_agent_message("surviving output"),
+            RuntimeError("model-b failed"),
+            RuntimeError("model-c failed"),
+        ]
+        mock_cls = MagicMock()
+        mock_inst = MagicMock()
+        mock_cls.return_value = mock_inst
+        mock_inst.complete = AsyncMock(side_effect=responses)
+
+        with patch(_PROVIDER, mock_cls):
+            orch = ParallelOrchestrator(
+                task=_make_task(),
+                config=PipelineConfig(
+                    pipeline_mode="parallel", arbiter_mode="off",
+                ),
+                registry=registry,
+            )
+            result = await orch.run()
+
+        assert result.success is True
+        pr = result.parallel_result
+        assert pr is not None
+        assert len(pr.individual_outputs) == 1
+        assert pr.scores == {}
+
+    async def test_all_models_fail_raises(self):
+        """If all models fail in fan-out, raise RuntimeError."""
+        registry = _make_three_model_registry()
+        mock_cls = MagicMock()
+        mock_inst = MagicMock()
+        mock_cls.return_value = mock_inst
+        mock_inst.complete = AsyncMock(
+            side_effect=RuntimeError("all down"),
+        )
+
         with (
             patch(_PROVIDER, mock_cls),
-            pytest.raises(RuntimeError, match="at least 2"),
+            pytest.raises(RuntimeError, match="all models failed"),
         ):
             orch = ParallelOrchestrator(
                 task=_make_task(),
@@ -431,6 +489,97 @@ class TestParallelArbiter:
 
         assert result.halted is True
         assert result.success is False
+
+
+# ── Synthesis Retry on REJECT ─────────────────────────────────────
+
+
+class TestParallelSynthesisRetry:
+    """Tests for retry-on-REJECT in parallel synthesis."""
+
+    async def test_reject_triggers_retry_then_approve(self):
+        """REJECT verdict retries synthesis; APPROVE on retry succeeds."""
+        registry = _make_three_model_registry()
+        # 3 fan-out + 6 reviews + 1 synthesis + 1 retry synthesis = 11
+        responses = [_make_agent_message(f"out-{i}") for i in range(11)]
+        mock_cls, _ = _mock_provider(responses)
+
+        reject_review = _make_approve_review(
+            verdict=Verdict.REJECT,
+            reasoning="Missing error handling",
+        )
+        approve_review = _make_approve_review(verdict=Verdict.APPROVE)
+        # First review → REJECT, second (retry) → APPROVE
+        mock_arbiter = AsyncMock(side_effect=[reject_review, approve_review])
+
+        with patch(_PROVIDER, mock_cls), patch(_ARBITER_REVIEW, mock_arbiter):
+            orch = ParallelOrchestrator(
+                task=_make_task(),
+                config=PipelineConfig(
+                    pipeline_mode="parallel", arbiter_mode="bookend",
+                ),
+                registry=registry,
+            )
+            result = await orch.run()
+
+        assert result.success is True
+        assert len(result.arbiter_reviews) == 2
+        assert result.arbiter_reviews[0].verdict == Verdict.REJECT
+        assert result.arbiter_reviews[1].verdict == Verdict.APPROVE
+
+    async def test_reject_exhausts_retries(self):
+        """If synthesis is still REJECTED after max retries, run completes."""
+        registry = _make_three_model_registry()
+        # 3 fan-out + 6 reviews + 1 synthesis + 2 retry syntheses = 12
+        responses = [_make_agent_message(f"out-{i}") for i in range(12)]
+        mock_cls, _ = _mock_provider(responses)
+
+        reject_review = _make_approve_review(
+            verdict=Verdict.REJECT,
+            reasoning="Still bad",
+        )
+        # All 3 reviews (initial + 2 retries) → REJECT
+        mock_arbiter = AsyncMock(return_value=reject_review)
+
+        with patch(_PROVIDER, mock_cls), patch(_ARBITER_REVIEW, mock_arbiter):
+            orch = ParallelOrchestrator(
+                task=_make_task(),
+                config=PipelineConfig(
+                    pipeline_mode="parallel", arbiter_mode="bookend",
+                ),
+                registry=registry,
+            )
+            result = await orch.run()
+
+        # Still succeeds (not halted) but has REJECT verdicts
+        assert result.success is True
+        # 1 initial + 2 retries = 3 reviews
+        assert len(result.arbiter_reviews) == 3
+        assert all(r.verdict == Verdict.REJECT for r in result.arbiter_reviews)
+
+    async def test_flag_does_not_trigger_retry(self):
+        """FLAG verdict does NOT trigger retry (only REJECT does)."""
+        registry = _make_three_model_registry()
+        responses = [_make_agent_message(f"out-{i}") for i in range(10)]
+        mock_cls, _ = _mock_provider(responses)
+
+        flag_review = _make_approve_review(verdict=Verdict.FLAG)
+        mock_arbiter = AsyncMock(return_value=flag_review)
+
+        with patch(_PROVIDER, mock_cls), patch(_ARBITER_REVIEW, mock_arbiter):
+            orch = ParallelOrchestrator(
+                task=_make_task(),
+                config=PipelineConfig(
+                    pipeline_mode="parallel", arbiter_mode="bookend",
+                ),
+                registry=registry,
+            )
+            result = await orch.run()
+
+        # Only 1 review — no retries triggered
+        mock_arbiter.assert_called_once()
+        assert len(result.arbiter_reviews) == 1
+        assert result.success is True
 
 
 # ── Cost Tracking ─────────────────────────────────────────────────

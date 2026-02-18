@@ -1,4 +1,4 @@
-"""Triad Orchestrator CLI — Typer + Rich terminal interface.
+"""CRTX CLI — Typer + Rich terminal interface.
 
 Commands: run, plan, estimate, models, config, sessions.
 All output is Rich-powered with color-coded panels and tables.
@@ -8,7 +8,20 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from pathlib import Path
+
+# Ensure stdout/stderr use UTF-8 on Windows to avoid UnicodeEncodeError
+# when Rich renders Unicode symbols (✓, ✗, ▸, ⊘) through a codepage
+# like cp1252.  Safe no-op when the stream is already UTF-8.
+if sys.platform == "win32":
+    for _stream_name in ("stdout", "stderr"):
+        _stream = getattr(sys, _stream_name, None)
+        if _stream and hasattr(_stream, "reconfigure"):
+            try:
+                _stream.reconfigure(encoding="utf-8")
+            except Exception:
+                pass
 
 import typer
 from rich.console import Console
@@ -16,6 +29,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from triad import __version__
 from triad.keys import load_keys_env
 from triad.providers.registry import load_models, load_pipeline_config
 from triad.schemas.pipeline import (
@@ -27,7 +41,7 @@ from triad.schemas.pipeline import (
 from triad.schemas.consensus import DebateResult, ParallelResult
 from triad.schemas.routing import RoutingStrategy
 
-# Load API keys from ~/.triad/keys.env and .env on startup
+# Load API keys from ~/.crtx/keys.env and .env on startup
 load_keys_env()
 
 console = Console()
@@ -35,7 +49,7 @@ console = Console()
 # ── App and sub-apps ─────────────────────────────────────────────
 
 app = typer.Typer(
-    name="triad",
+    name="crtx",
     help="Multi-model AI orchestration with adversarial Arbiter review.",
     no_args_is_help=False,
     rich_markup_mode="rich",
@@ -63,12 +77,29 @@ sessions_app = typer.Typer(
 app.add_typer(sessions_app, name="sessions")
 
 
+# ── Version callback ───────────────────────────────────────────
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        console.print(f"crtx {__version__}")
+        raise typer.Exit()
+
+
 # ── App Callback ────────────────────────────────────────────────
 
 
 @app.callback(invoke_without_command=True)
-def main(ctx: typer.Context) -> None:
-    """Multi-model AI orchestration with adversarial Arbiter review."""
+def main(
+    ctx: typer.Context,
+    version: bool = typer.Option(
+        False, "--version", "-V",
+        help="Show version and exit.",
+        callback=_version_callback,
+        is_eager=True,
+    ),
+) -> None:
+    """CRTX — multi-model AI orchestration with adversarial Arbiter review."""
     if ctx.invoked_subcommand is None:
         from triad.cli_display import render_full_logo
         from triad.repl import TriadREPL
@@ -107,7 +138,7 @@ def _verdict_style(verdict: str) -> str:
     }.get(verdict.lower(), "white")
 
 
-# ── triad setup ──────────────────────────────────────────────────
+# ── crtx setup ───────────────────────────────────────────────────
 
 
 @app.command()
@@ -124,7 +155,7 @@ def setup(
     """Walk through interactive API key configuration.
 
     First-time setup for new users. Prompts for provider API keys,
-    validates them, and saves to ~/.triad/keys.env.
+    validates them, and saves to ~/.crtx/keys.env.
     """
     from rich.prompt import Prompt
 
@@ -161,7 +192,7 @@ def setup(
     banner.append("    ╱", style="#00ff66")
     banner.append("◈", style="#D4A843")
     banner.append("╲", style="#00ff66")
-    banner.append("    Triad Orchestrator v0.1.0\n", style="#00ff88")
+    banner.append("    CRTX v0.1.0\n", style="#00ff88")
     banner.append("   ◆", style="#00ffbb")
     banner.append("──", style="#00ff66")
     banner.append("◆", style="#00ffbb")
@@ -169,7 +200,7 @@ def setup(
     console.print(banner)
 
     console.print(
-        "  Triad needs API keys to call AI models. You only need [bold]ONE[/bold] provider\n"
+        "  CRTX needs API keys to call AI models. You only need [bold]ONE[/bold] provider\n"
         "  to get started, but more providers = better model selection.\n"
     )
     console.print("  [bold]── Provider Setup ────────────────────────────────────────────[/bold]\n")
@@ -193,7 +224,6 @@ def setup(
             f"      {env_var}",
             default="",
             show_default=False,
-            password=True,
             console=console,
         )
 
@@ -206,7 +236,7 @@ def setup(
     # Check at least one key provided
     if not collected_keys:
         console.print("  [red]No API keys provided.[/red] You need at least one provider.")
-        console.print("  Run [bold]triad setup[/bold] again when you have a key.\n")
+        console.print("  Run [bold]crtx setup[/bold] again when you have a key.\n")
         raise typer.Exit(1) from None
 
     # Validate keys
@@ -280,8 +310,8 @@ def setup(
     )
     console.print()
     console.print(
-        "  Run [bold]triad[/bold] to start, or "
-        "[bold]triad run \"your task\"[/bold] for a quick test.\n"
+        "  Run [bold]crtx[/bold] to start, or "
+        "[bold]crtx run \"your task\"[/bold] for a quick test.\n"
     )
 
 
@@ -295,7 +325,7 @@ def _setup_check() -> None:
     if not has_any:
         console.print(
             "[dim]No API keys configured.[/dim] "
-            "Run [bold]triad setup[/bold] to get started."
+            "Run [bold]crtx setup[/bold] to get started."
         )
         raise typer.Exit(1) from None
 
@@ -329,22 +359,26 @@ def _setup_check() -> None:
         raise typer.Exit(1) from None
 
 
-# ── triad run ────────────────────────────────────────────────────
+# ── crtx run ─────────────────────────────────────────────────────
 
 @app.command()
 def run(
     task: str = typer.Argument(..., help="Task description — what to build"),
+    preset: str = typer.Option(
+        None, "--preset", "-p",
+        help="Pipeline preset: fast, balanced, thorough, explore, debate, cheap",
+    ),
     mode: str = typer.Option(
         None, "--mode", "-m",
-        help="Pipeline mode: sequential, parallel, or debate",
+        help="Override pipeline mode: sequential, parallel, debate",
     ),
     route: str = typer.Option(
         None, "--route", "-r",
-        help="Routing strategy: quality_first, cost_optimized, speed_first, hybrid",
+        help="Override routing: quality_first, cost_optimized, speed_first, hybrid",
     ),
     arbiter: str = typer.Option(
         None, "--arbiter", "-a",
-        help="Arbiter mode: off, final_only, bookend, full",
+        help="Override arbiter: off, final_only, bookend, full",
     ),
     reconcile: bool = typer.Option(
         False, "--reconcile",
@@ -371,7 +405,7 @@ def run(
         help="Disable session persistence",
     ),
     output_dir: str = typer.Option(
-        "triad-output", "--output-dir", "-o",
+        "crtx-output", "--output-dir", "-o",
         help="Directory for pipeline output files",
     ),
     context_dir: str = typer.Option(
@@ -419,6 +453,10 @@ def run(
         "", "--test-command",
         help="Test command to run after apply",
     ),
+    arbiter_model: str = typer.Option(
+        "", "--arbiter-model",
+        help="Pin a specific model for all Arbiter reviews (e.g. claude-opus)",
+    ),
     # ── Streaming flags ───────────────────────────────────────
     no_stream: bool = typer.Option(
         False, "--no-stream",
@@ -431,7 +469,7 @@ def run(
     if not has_any_key():
         console.print(
             "[red]No API keys configured.[/red] "
-            "Run [bold]triad setup[/bold] to get started."
+            "Run [bold]crtx setup[/bold] to get started."
         )
         raise typer.Exit(1) from None
 
@@ -442,34 +480,21 @@ def run(
         )
         raise typer.Exit(1) from None
 
-    from triad.cli_display import (
-        ConfigScreen,
-        PipelineDisplay,
-    )
+    from triad.cli_display import PipelineDisplay
 
     registry = _load_registry()
     base_config = _load_config()
 
-    # Detect whether flags were explicitly set
-    explicit_flags = mode is not None or route is not None or arbiter is not None
+    # Resolve preset with flag overrides
+    from triad.presets import PRESETS, resolve_preset
 
-    # Load defaults from config for unset flags
-    if mode is None:
-        mode = base_config.pipeline_mode.value
-    if route is None:
-        route = base_config.routing_strategy.value
-    if arbiter is None:
-        arbiter = base_config.arbiter_mode.value
-
-    # Interactive config screen when no explicit flags and running interactively
-    from triad.cli_display import is_interactive as _is_interactive
-
-    if not explicit_flags and _is_interactive():
-        config_screen = ConfigScreen(task, base_config, registry)
-        result = config_screen.show(console)
-        if result is None:
-            raise typer.Exit(0)
-        mode, route, arbiter = result
+    try:
+        mode, route, arbiter = resolve_preset(
+            preset, mode=mode, route=route, arbiter=arbiter,
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from None
 
     # Validate enums
     try:
@@ -516,7 +541,7 @@ def run(
         max_retries=max_retries,
         reconciliation_retries=base_config.reconciliation_retries,
         stages=base_config.stages,
-        arbiter_model=base_config.arbiter_model,
+        arbiter_model=arbiter_model or base_config.arbiter_model,
         reconcile_model=base_config.reconcile_model,
         routing_strategy=routing_strategy,
         min_fitness=base_config.min_fitness,
@@ -534,6 +559,35 @@ def run(
         domain_rules=domain_context,
         output_dir=output_dir,
     )
+
+    # Pre-flight check: parallel and debate need multiple providers
+    if pipeline_mode in (PipelineMode.PARALLEL, PipelineMode.DEBATE):
+        from triad.orchestrator import _select_top_models
+
+        n_parallel = 3  # matches ParallelOrchestrator._MAX_PARALLEL_MODELS
+        selected = _select_top_models(registry, n_parallel)
+        reachable = [
+            key for key, cfg in selected.items()
+            if os.environ.get(cfg.api_key_env)
+        ]
+        if len(reachable) < 2:
+            mode_label = pipeline_mode.value.title()
+            selected_names = [
+                f"{cfg.display_name} ({cfg.api_key_env})"
+                for cfg in selected.values()
+            ]
+            console.print(Panel(
+                f"[bold red]{mode_label} mode requires at least 2 reachable models, "
+                f"but only {len(reachable)} of {len(selected)} selected models "
+                f"have API keys configured.[/bold red]\n\n"
+                f"[dim]Selected (by fitness): {', '.join(selected_names)}[/dim]\n"
+                f"[dim]Reachable: {', '.join(reachable) or 'none'}[/dim]\n"
+                "\nRun [bold]crtx setup[/bold] to add more provider keys, "
+                "or use [bold]--mode sequential[/bold] instead.",
+                title=f"{mode_label} Mode Unavailable",
+                border_style="red",
+            ))
+            raise typer.Exit(1) from None
 
     # Run pipeline
     from triad.cli_display import is_interactive
@@ -559,40 +613,51 @@ def run(
 
     stream_callback = None
 
-    if use_streaming:
-        try:
-            from triad.cli_streaming_display import ScrollingPipelineDisplay
+    try:
+        if use_streaming:
+            try:
+                from triad.cli_streaming_display import ScrollingPipelineDisplay
 
-            streaming_display = ScrollingPipelineDisplay(console, mode, route, arbiter)
-            emitter.add_listener(streaming_display.create_listener())
-            stream_callback = streaming_display.create_stream_callback()
-            with streaming_display:
-                pipeline_result = asyncio.run(
-                    run_pipeline(
-                        task_spec, config, registry, emitter,
-                        stream_callback=stream_callback,
-                    ),
-                )
-        except ImportError:
-            # Fall back to standard display if streaming module not available
-            use_streaming = False
+                streaming_display = ScrollingPipelineDisplay(console, mode, route, arbiter)
+                emitter.add_listener(streaming_display.create_listener())
+                stream_callback = streaming_display.create_stream_callback()
+                with streaming_display:
+                    pipeline_result = asyncio.run(
+                        run_pipeline(
+                            task_spec, config, registry, emitter,
+                            stream_callback=stream_callback,
+                        ),
+                    )
+            except ImportError:
+                # Fall back to standard display if streaming module not available
+                use_streaming = False
 
-    if not use_streaming:
-        if interactive:
-            display = PipelineDisplay(console, mode, route, arbiter)
-            emitter.add_listener(display.create_listener())
-            with display:
-                pipeline_result = asyncio.run(
-                    run_pipeline(task_spec, config, registry, emitter),
-                )
-        else:
-            # Non-interactive: show static task panel + spinner
-            _display_task_panel(task_spec, config)
-            console.print()
-            with console.status("[bold blue]Running pipeline...", spinner="dots"):
-                pipeline_result = asyncio.run(
-                    run_pipeline(task_spec, config, registry, emitter),
-                )
+        if not use_streaming:
+            if interactive:
+                display = PipelineDisplay(console, mode, route, arbiter)
+                emitter.add_listener(display.create_listener())
+                with display:
+                    pipeline_result = asyncio.run(
+                        run_pipeline(task_spec, config, registry, emitter),
+                    )
+            else:
+                # Non-interactive: show static task panel + spinner
+                _display_task_panel(task_spec, config)
+                console.print()
+                with console.status("[bold blue]Running pipeline...", spinner="dots"):
+                    pipeline_result = asyncio.run(
+                        run_pipeline(task_spec, config, registry, emitter),
+                    )
+    except RuntimeError as exc:
+        console.print(Panel(
+            f"[bold red]{exc}[/bold red]\n\n"
+            "This usually means too many models failed authentication. "
+            "Run [bold]crtx setup --check[/bold] to verify your API keys, "
+            "or use [bold]--mode sequential[/bold] which only needs one provider.",
+            title="Pipeline Error",
+            border_style="red",
+        ))
+        raise typer.Exit(1) from None
 
     # Write output files
     from triad.output.writer import write_pipeline_output
@@ -657,7 +722,7 @@ def _display_task_panel(task_spec: TaskSpec, config: PipelineConfig) -> None:
     if config.reconciliation_enabled:
         info.append("  +reconcile", style="dim")
 
-    console.print(Panel(info, title="[bold blue]Triad Pipeline[/bold blue]", border_style="blue"))
+    console.print(Panel(info, title="[bold blue]CRTX Pipeline[/bold blue]", border_style="blue"))
 
 
 def _display_name_from_litellm_id(litellm_id: str) -> str:
@@ -853,11 +918,17 @@ def _display_completion(
     else:
         tok_str = str(total_tokens)
 
-    # Count unique models
+    # Count unique models and stages
     model_set = set()
     for d in result.routing_decisions:
         model_set.add(d.model_key)
     model_count = len(model_set) or len(result.stages)
+
+    # Parallel mode: derive from parallel_result since stages/routing_decisions are empty
+    stage_count = len(result.stages)
+    if result.parallel_result and not stage_count:
+        stage_count = len(result.parallel_result.individual_outputs) + 1  # fan-out + synthesis
+        model_count = len(result.parallel_result.individual_outputs)
 
     # Build verdicts line
     verdicts_parts: list[str] = []
@@ -870,12 +941,20 @@ def _display_completion(
         )
     verdicts_str = "  ".join(verdicts_parts)
 
+    # Check for REJECT verdicts
+    has_rejects = any(
+        r.verdict.value == "reject" for r in result.arbiter_reviews
+    )
+
     # Status line
     if result.halted:
         status_line = "[bold bright_red]✗ PIPELINE HALTED[/bold bright_red]"
         if result.halt_reason:
             status_line += f"\n\n[dim]{result.halt_reason[:200]}[/dim]"
         border_style = "bright_red"
+    elif result.success and has_rejects:
+        status_line = "[bold yellow]⚠ COMPLETED WITH REJECTIONS[/bold yellow]"
+        border_style = "yellow"
     elif result.success:
         status_line = "[bold green]✓ PIPELINE COMPLETED SUCCESSFULLY[/bold green]"
         border_style = "green"
@@ -888,7 +967,7 @@ def _display_completion(
         f"[dim]Duration:[/dim] [bold]{duration}[/bold]   "
         f"[dim]Cost:[/dim] [bold]${result.total_cost:.2f}[/bold]   "
         f"[dim]Tokens:[/dim] [bold]{tok_str}[/bold]\n"
-        f"[dim]Stages:[/dim] [bold]{len(result.stages)}[/bold]        "
+        f"[dim]Stages:[/dim] [bold]{stage_count}[/bold]        "
         f"[dim]Models:[/dim] [bold]{model_count} providers[/bold]\n"
     )
 
@@ -954,7 +1033,7 @@ def _display_apply_result(result) -> None:
             console.print("  [yellow]Changes rolled back[/yellow]")
 
 
-# ── triad show ───────────────────────────────────────────────────
+# ── crtx show ────────────────────────────────────────────────────
 
 
 @app.command()
@@ -963,7 +1042,7 @@ def show(
     view: str = typer.Argument("", help="View: summary, code, reviews, diffs (empty for menu)"),
 ) -> None:
     """View outputs from a previous pipeline run."""
-    output_base = Path("triad-output")
+    output_base = Path("crtx-output")
 
     if session_id == "latest":
         session_dir = _find_latest_session(output_base)
@@ -1037,7 +1116,7 @@ def _load_session_result(session_dir: Path) -> object | None:
         return None
 
 
-# ── triad plan ───────────────────────────────────────────────────
+# ── crtx plan ────────────────────────────────────────────────────
 
 @app.command()
 def plan(
@@ -1287,12 +1366,12 @@ def _run_from_plan(result, registry, mode_str: str, route_str: str) -> None:
 
     from triad.output.writer import write_pipeline_output
 
-    output_dir = task_spec.output_dir or "triad-output"
+    output_dir = task_spec.output_dir or "crtx-output"
     actual_path = write_pipeline_output(pipeline_result, output_dir)
     console.print(f"\n[dim]Output written to:[/dim] {actual_path}/")
 
 
-# ── triad estimate ───────────────────────────────────────────────
+# ── crtx estimate ────────────────────────────────────────────────
 
 @app.command()
 def estimate(
@@ -1372,7 +1451,7 @@ def estimate(
     console.print("[dim]Estimates use conservative token projections. Actual costs may vary.[/dim]")
 
 
-# ── triad models ─────────────────────────────────────────────────
+# ── crtx models ──────────────────────────────────────────────────
 
 @models_app.command("list")
 def models_list() -> None:
@@ -1508,7 +1587,7 @@ def models_test(
         raise typer.Exit(1) from None
 
 
-# ── triad config ─────────────────────────────────────────────────
+# ── crtx config ──────────────────────────────────────────────────
 
 @config_app.command("show")
 def config_show() -> None:
@@ -1577,7 +1656,7 @@ def config_path() -> None:
     console.print(table)
 
 
-# ── triad sessions ───────────────────────────────────────────────
+# ── crtx sessions ────────────────────────────────────────────────
 
 @sessions_app.command("list")
 def sessions_list(
@@ -1801,7 +1880,7 @@ def sessions_delete(
         raise typer.Exit(1) from None
 
 
-# ── triad review ─────────────────────────────────────────────────
+# ── crtx review ──────────────────────────────────────────────────
 
 @app.command()
 def review(
@@ -1888,7 +1967,7 @@ def review(
         f"[bold]Models:[/bold] {len(registry)}\n"
         f"[bold]Focus:[/bold] {', '.join(focus_areas) if focus_areas else 'all'}\n"
         f"[bold]Arbiter:[/bold] {'enabled' if not no_arbiter else 'disabled'}",
-        title="[bold blue]Triad Review[/bold blue]",
+        title="[bold blue]CRTX Review[/bold blue]",
         border_style="blue",
     ))
 
@@ -1981,27 +2060,27 @@ def dashboard(
     """Start the real-time pipeline dashboard server.
 
     Opens a browser with a live visualization of pipeline runs.
-    Run `triad run --task "..."` in another terminal to see agents work.
+    Run `crtx run --task "..."` in another terminal to see agents work.
 
-    Requires: pip install triad-orchestrator[dashboard]
+    Requires: pip install crtx[dashboard]
     """
     try:
         from triad.dashboard.server import create_app  # noqa: F811
     except ImportError:
         console.print(
             "[red]Dashboard requires extra dependencies.[/red]\n"
-            "Install with: [bold]pip install triad-orchestrator\\[dashboard][/bold]"
+            "Install with: [bold]pip install crtx\\[dashboard][/bold]"
         )
         raise typer.Exit(1) from None
 
     console.print(Panel(
         f"[bold]URL:[/bold] http://localhost:{port}\n"
         f"[bold]Auto-open:[/bold] {'no' if no_browser else 'yes'}",
-        title="[bold blue]Triad Dashboard[/bold blue]",
+        title="[bold blue]CRTX Dashboard[/bold blue]",
         border_style="blue",
     ))
     console.print(
-        "[dim]Run [bold]triad run --task \"...\"[/bold] in another terminal "
+        "[dim]Run [bold]crtx run --task \"...\"[/bold] in another terminal "
         "to see real-time pipeline events.[/dim]"
     )
 

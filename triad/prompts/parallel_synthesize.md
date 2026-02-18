@@ -37,13 +37,30 @@ These approaches were not selected, but may contain valuable ideas worth incorpo
 {% endfor %}
 {% endif %}
 
+{% if arbiter_feedback %}
+## Arbiter Feedback — Revision Required
+
+The reviewer found these issues with your previous synthesis:
+
+{{ arbiter_feedback }}
+
+Revise the output to address **all critical issues**. Produce complete implementations, not placeholders.
+{% endif %}
+
 ## Your Mandate
 
 1. Start from the winning approach as the foundation
 2. Identify any superior elements from the other proposals (better error handling, cleaner abstractions, additional edge cases, etc.)
 3. Integrate those elements into the winning approach
 4. Produce a single, cohesive final output that represents the best of all proposals
+{% if arbiter_feedback %}
+5. Address every issue raised in the Arbiter Feedback section above
+{% endif %}
 
 Do NOT simply concatenate approaches. The result should read as a single coherent solution.
+
+## Code Completeness
+
+Produce complete, runnable implementations. Every function must have a full body. No ellipsis placeholders, no TODO comments, no pass statements, no "implementation left as exercise" patterns. If the code isn't complete, don't include it.
 
 CONFIDENCE: <0.0-1.0>
