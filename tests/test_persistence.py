@@ -722,7 +722,7 @@ def test_pipeline_config_persist_defaults():
     """PipelineConfig has persist_sessions=True and default db path."""
     config = PipelineConfig()
     assert config.persist_sessions is True
-    assert config.session_db_path == "~/.triad/sessions.db"
+    assert config.session_db_path == "~/.crtx/sessions.db"
 
 
 def test_pipeline_result_session_id_default():

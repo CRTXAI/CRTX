@@ -199,6 +199,6 @@
   </circle>
 
   <!-- Wordmark -->
-  <text x="400" y="690" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="50" font-weight="700" letter-spacing="20" fill="#00ffaa" opacity="0.9">TRIAD</text>
-  <text x="400" y="725" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="13" font-weight="400" letter-spacing="8" fill="#00cc88" opacity="0.45">ORCHESTRATOR</text>
+  <text x="400" y="690" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="50" font-weight="700" letter-spacing="20" fill="#00ffaa" opacity="0.9">CRTX</text>
+  <text x="400" y="725" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="13" font-weight="400" letter-spacing="6" fill="#00cc88" opacity="0.45">/k&#xF4;r'teks/</text>
 </svg>

@@ -18,15 +18,15 @@ class TestProAgentInit:
     def test_from_config_returns_none_without_key(self):
         """ProAgent.from_config() returns None when no key is configured."""
         with patch.dict("os.environ", {}, clear=False):
-            # Ensure TRIAD_PRO_KEY is not set
+            # Ensure CRTX_PRO_KEY is not set
             import os
-            os.environ.pop("TRIAD_PRO_KEY", None)
+            os.environ.pop("CRTX_PRO_KEY", None)
             agent = ProAgent.from_config()
             assert agent is None
 
     def test_from_config_returns_agent_with_key(self):
         """ProAgent.from_config() returns an agent when key is set."""
-        with patch.dict("os.environ", {"TRIAD_PRO_KEY": "sk_triad_test123"}):
+        with patch.dict("os.environ", {"CRTX_PRO_KEY": "sk_triad_test123"}):
             agent = ProAgent.from_config()
             assert agent is not None
             assert isinstance(agent, ProAgent)
@@ -34,8 +34,8 @@ class TestProAgentInit:
     def test_custom_api_url_from_env(self):
         """ProAgent picks up custom API URL from env var."""
         with patch.dict("os.environ", {
-            "TRIAD_PRO_KEY": "sk_triad_test123",
-            "TRIAD_PRO_URL": "https://custom.api.example.com/ingest",
+            "CRTX_PRO_KEY": "sk_triad_test123",
+            "CRTX_PRO_URL": "https://custom.api.example.com/ingest",
         }):
             agent = ProAgent.from_config()
             assert agent is not None

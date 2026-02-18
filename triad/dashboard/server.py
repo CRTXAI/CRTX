@@ -5,7 +5,7 @@ events over WebSocket to all connected clients. Also provides REST
 endpoints for session history, model registry, and configuration.
 
 Requires the 'dashboard' optional dependency group:
-    pip install triad-orchestrator[dashboard]
+    pip install crtx[dashboard]
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ def create_app() -> Any:
     except ImportError as exc:
         raise ImportError(
             "Dashboard requires extra dependencies. "
-            "Install with: pip install triad-orchestrator[dashboard]"
+            "Install with: pip install crtx[dashboard]"
         ) from exc
 
     app = FastAPI(

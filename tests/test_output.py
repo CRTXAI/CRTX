@@ -199,7 +199,7 @@ class TestWriterParallel:
         actual_path = write_pipeline_output(result, out_dir)
 
         summary = (Path(actual_path) / "summary.md").read_text()
-        assert "Triad Pipeline Summary" in summary
+        assert "CRTX Pipeline Summary" in summary
         assert "Parallel" in summary
 
     def test_creates_session_json_for_parallel(self, tmp_path):
@@ -272,7 +272,7 @@ class TestWriterDebate:
         actual_path = write_pipeline_output(result, out_dir)
 
         summary = (Path(actual_path) / "summary.md").read_text()
-        assert "Triad Pipeline Summary" in summary
+        assert "CRTX Pipeline Summary" in summary
         assert "Debate" in summary
 
     def test_creates_session_json_for_debate(self, tmp_path):

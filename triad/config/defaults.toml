@@ -1,4 +1,4 @@
-# Triad Orchestrator — Default Pipeline Configuration
+# CRTX — Default Pipeline Configuration
 # Override these via CLI flags or per-task config.
 
 [pipeline]

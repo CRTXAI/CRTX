@@ -22,3 +22,7 @@ config/domain/
 .DS_Store
 debug-dump/
 debug-bundle.txt
+
+# Pipeline output
+crtx-output/
+triad-output/

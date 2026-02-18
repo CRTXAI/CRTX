@@ -1,4 +1,4 @@
-"""Consensus protocol engine for the Triad Orchestrator.
+"""Consensus protocol engine for CRTX.
 
 Manages the full consensus flow: suggestion evaluation by primary
 role-holder, escalation to group vote on high-confidence rejections,

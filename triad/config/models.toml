@@ -1,4 +1,4 @@
-# Triad Orchestrator — Model Registry
+# CRTX — Model Registry
 # Each entry configures a model for use in the pipeline via LiteLLM.
 # Adding a new model = adding a new [models.<name>] section.
 

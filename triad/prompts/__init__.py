@@ -20,7 +20,7 @@ def render_prompt(template_name: str, **variables: object) -> str:
 
     Args:
         template_name: Name of the template file (without .md extension).
-                       Must correspond to a file in triad/prompts/.
+                       Must correspond to a file in the prompts/ directory.
         **variables: Template variables to inject (task, context,
                      domain_context, previous_output, etc.).
 

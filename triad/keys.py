@@ -1,9 +1,9 @@
-"""API key management for Triad Orchestrator.
+"""API key management for CRTX.
 
 Handles loading, saving, and validating provider API keys.
-Keys are stored in ~/.triad/keys.env and loaded with this priority:
+Keys are stored in ~/.crtx/keys.env and loaded with this priority:
   1. Environment variables (highest — already set in shell)
-  2. ~/.triad/keys.env (user's saved keys from `triad setup`)
+  2. ~/.crtx/keys.env (user's saved keys from `crtx setup`)
   3. .env in current directory (project-level)
 """
 
@@ -15,9 +15,9 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Directory for user-level Triad configuration
-TRIAD_HOME = Path.home() / ".triad"
-KEYS_FILE = TRIAD_HOME / "keys.env"
+# Directory for user-level CRTX configuration
+CRTX_HOME = Path.home() / ".crtx"
+KEYS_FILE = CRTX_HOME / "keys.env"
 
 # Provider definitions: (env_var, display_name, description, signup_url)
 PROVIDERS = [
@@ -70,17 +70,17 @@ PROVIDER_NAMES: dict[str, str] = {
     "XAI_API_KEY": "xAI",
 }
 
-# Triad Pro API key (not a model provider — used for dashboard event forwarding)
-PRO_KEY_ENV = "TRIAD_PRO_KEY"
+# CRTX Pro API key (not a model provider — used for dashboard event forwarding)
+PRO_KEY_ENV = "CRTX_PRO_KEY"
 
 
 def load_keys_env() -> None:
-    """Load API keys from ~/.triad/keys.env and .env into os.environ.
+    """Load API keys from ~/.crtx/keys.env and .env into os.environ.
 
     Respects priority: existing env vars are NOT overwritten.
     Load order (later files don't overwrite earlier):
       1. Environment variables (already in os.environ)
-      2. ~/.triad/keys.env
+      2. ~/.crtx/keys.env
       3. .env in current working directory
     """
     files = [KEYS_FILE, Path.cwd() / ".env"]
@@ -110,7 +110,7 @@ def _load_env_file(path: Path) -> None:
 
 
 def save_keys(keys: dict[str, str]) -> Path:
-    """Save API keys to ~/.triad/keys.env.
+    """Save API keys to ~/.crtx/keys.env.
 
     Args:
         keys: Mapping of env var name to key value (only non-empty saved).
@@ -118,9 +118,9 @@ def save_keys(keys: dict[str, str]) -> Path:
     Returns:
         Path to the saved file.
     """
-    TRIAD_HOME.mkdir(parents=True, exist_ok=True)
+    CRTX_HOME.mkdir(parents=True, exist_ok=True)
 
-    lines = ["# Triad Orchestrator API Keys", f"# Saved by `triad setup`", ""]
+    lines = ["# CRTX API Keys", "# Saved by `crtx setup`", ""]
     for env_var, value in keys.items():
         if value:
             lines.append(f"{env_var}={value}")
@@ -137,7 +137,7 @@ def save_keys(keys: dict[str, str]) -> Path:
 
 
 def clear_keys() -> bool:
-    """Remove ~/.triad/keys.env if it exists.
+    """Remove ~/.crtx/keys.env if it exists.
 
     Returns:
         True if the file was removed, False if it didn't exist.

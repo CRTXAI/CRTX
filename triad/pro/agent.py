@@ -1,4 +1,4 @@
-"""ProAgent — lightweight event forwarder for Triad Pro dashboard.
+"""ProAgent — lightweight event forwarder for CRTX Pro dashboard.
 
 Registers as a PipelineEventEmitter listener and batches events
 for delivery to the Pro ingestion API. Uses only stdlib (no new
@@ -20,7 +20,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Default API endpoint — can be overridden via env var
-_DEFAULT_API_URL = "https://api.triad-orchestrator.com/api/v1/events/ingest"
+_DEFAULT_API_URL = "https://api.crtx.dev/api/v1/events/ingest"
 
 # Batch window: collect events for this many seconds before flushing
 _BATCH_WINDOW_S = 0.1
@@ -30,7 +30,7 @@ _MAX_BATCH_SIZE = 200
 
 
 class ProAgent:
-    """Forwards pipeline events to the Triad Pro ingestion API.
+    """Forwards pipeline events to the CRTX Pro ingestion API.
 
     Usage:
         pro = ProAgent.from_config()
@@ -40,7 +40,7 @@ class ProAgent:
 
     def __init__(self, api_key: str, api_url: str | None = None) -> None:
         self._api_key = api_key
-        self._api_url = api_url or os.environ.get("TRIAD_PRO_URL", _DEFAULT_API_URL)
+        self._api_url = api_url or os.environ.get("CRTX_PRO_URL", _DEFAULT_API_URL)
         self._session_id: str | None = None
         self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._flush_task: asyncio.Task[None] | None = None
@@ -55,7 +55,7 @@ class ProAgent:
         from triad.keys import load_keys_env
 
         load_keys_env()
-        key = os.environ.get("TRIAD_PRO_KEY", "")
+        key = os.environ.get("CRTX_PRO_KEY", "")
         if not key:
             return None
         return cls(api_key=key)

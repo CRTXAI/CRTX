@@ -1,7 +1,7 @@
-"""Interactive REPL for the Triad Orchestrator.
+"""Interactive REPL for CRTX.
 
 Provides a persistent interactive session with command dispatch,
-session state management, and task execution. Launch with `triad`
+session state management, and task execution. Launch with `crtx`
 (no subcommand).
 """
 
@@ -35,7 +35,7 @@ _STATE_COMMANDS = {"mode", "route", "arbiter"}
 # All recognized first-words — anything matching these is NOT a task
 _KNOWN_COMMANDS = (
     _CLI_COMMANDS | _STATE_COMMANDS
-    | {"help", "status", "exit", "quit", "run", "show"}
+    | {"help", "status", "exit", "quit", "run", "show", "preset"}
 )
 
 # Valid values for session state
@@ -45,7 +45,7 @@ _VALID_ARBITERS = {"off", "final_only", "bookend", "full"}
 
 
 class TriadREPL:
-    """Interactive REPL loop for the Triad Orchestrator.
+    """Interactive REPL loop for CRTX.
 
     Manages session state (mode, route, arbiter defaults) and
     dispatches commands or task descriptions to the appropriate
@@ -71,8 +71,12 @@ class TriadREPL:
 
         while True:
             try:
+                from triad.presets import format_prompt_tag
+
+                tag = format_prompt_tag(self.mode, self.route, self.arbiter)
                 prompt_text = Text()
-                prompt_text.append("\ntriad", style=BRAND["green"])
+                prompt_text.append("\ncrtx", style=BRAND["green"])
+                prompt_text.append(f" [{tag}]", style=BRAND["dim"])
                 prompt_text.append(" ▸ ", style=BRAND["mint"])
 
                 user_input = console.input(prompt_text).strip()
@@ -253,6 +257,10 @@ class TriadREPL:
             self._show_status()
             return
 
+        if command == "preset":
+            self._handle_preset(args)
+            return
+
         if command in _STATE_COMMANDS:
             self._set_state(command, args)
             return
@@ -292,6 +300,8 @@ class TriadREPL:
         help_text.append("  View last run (summary/code/reviews/diffs)\n")
 
         help_text.append("\n  Session Settings\n", style="bold")
+        help_text.append("    preset <name>     ", style=BRAND["green"])
+        help_text.append("  Apply preset (fast/balanced/thorough/explore/debate/cheap)\n")
         help_text.append("    mode <value>      ", style=BRAND["green"])
         help_text.append("  Set pipeline mode (sequential/parallel/debate)\n")
         help_text.append("    route <value>     ", style=BRAND["green"])
@@ -380,6 +390,42 @@ class TriadREPL:
                 return
             self.arbiter = value
             console.print(f"  Arbiter set to [{BRAND['green']}]{value}[/{BRAND['green']}]")
+
+    def _handle_preset(self, args: str) -> None:
+        """Apply a named preset or list available presets."""
+        from triad.presets import PRESETS
+
+        name = args.strip().lower()
+        g = BRAND["green"]
+        d = BRAND["dim"]
+
+        if not name:
+            # Show available presets
+            console.print("\n  [bold]Available presets:[/bold]")
+            for pname, (m, r, a) in PRESETS.items():
+                console.print(
+                    f"    [{g}]{pname:<10}[/{g}]  "
+                    f"[{d}]{m} | {r} | {a}[/{d}]"
+                )
+            console.print()
+            return
+
+        if name not in PRESETS:
+            valid = ", ".join(PRESETS)
+            console.print(
+                f"  [{BRAND['red']}]Unknown preset:[/{BRAND['red']}] '{name}'. "
+                f"Choose from: {valid}"
+            )
+            return
+
+        m, r, a = PRESETS[name]
+        self.mode = m
+        self.route = r
+        self.arbiter = a
+        console.print(
+            f"  Preset [{g}]{name}[/{g}] → "
+            f"[{d}]{m} | {r} | {a}[/{d}]"
+        )
 
     def _invoke_cli(self, user_input: str) -> None:
         """Invoke a CLI subcommand via Typer runner."""
@@ -484,7 +530,7 @@ class TriadREPL:
 
             from triad.output.writer import write_pipeline_output
 
-            output_dir = "triad-output"
+            output_dir = "crtx-output"
             actual_path = write_pipeline_output(pipeline_result, output_dir)
 
             # Store for the `show` command
@@ -518,7 +564,7 @@ class TriadREPL:
         if not self._last_session_dir or not self._last_result:
             console.print(
                 f"  [{BRAND['dim']}]No previous run. "
-                f"Use 'run' first or use 'triad show' from the CLI.[/{BRAND['dim']}]"
+                f"Use 'run' first or use 'crtx show' from the CLI.[/{BRAND['dim']}]"
             )
             return
 

@@ -1,4 +1,4 @@
-"""Triad session persistence layer.
+"""CRTX session persistence layer.
 
 Provides SQLite-backed storage for pipeline session records,
 with support for querying, export (JSON/Markdown), and cleanup.

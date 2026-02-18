@@ -168,7 +168,7 @@ class PipelineConfig(BaseModel):
         description="Whether to persist pipeline sessions to SQLite",
     )
     session_db_path: str = Field(
-        default="~/.triad/sessions.db",
+        default="~/.crtx/sessions.db",
         description="Path to the session database file",
     )
     context_dir: str | None = Field(

@@ -723,10 +723,10 @@ class TestFormatSummary:
         assert "claude-sonnet" in summary
         assert "gpt-4o" in summary
 
-    def test_footer_contains_triad_link(self):
+    def test_footer_contains_crtx_link(self):
         result = ReviewResult(consensus_recommendation="approve")
         summary = format_summary(result)
-        assert "Triad Orchestrator" in summary
+        assert "CRTX" in summary
 
     def test_cost_formatting(self):
         result = ReviewResult(

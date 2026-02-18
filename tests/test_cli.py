@@ -176,7 +176,7 @@ class TestHelp:
         assert "delete" in result.output
 
 
-# ── triad run Tests ───────────────────────────────────────────────
+# ── crtx run Tests ───────────────────────────────────────────────
 
 
 class TestRun:
@@ -199,7 +199,7 @@ class TestRun:
         assert "Invalid arbiter mode" in result.output
 
     def test_run_invokes_pipeline(self, tmp_path):
-        """triad run invokes the pipeline and writes output."""
+        """crtx run invokes the pipeline and writes output."""
         mock_result = _make_pipeline_result()
 
         with (
@@ -219,7 +219,7 @@ class TestRun:
         mock_write.assert_called_once()
 
     def test_run_shows_halted_result(self):
-        """triad run displays halt info when pipeline halts."""
+        """crtx run displays halt info when pipeline halts."""
         mock_result = _make_pipeline_result(
             success=False, halted=True, halt_reason="Critical bug found",
         )
@@ -238,7 +238,7 @@ class TestRun:
         assert "HALTED" in result.output
 
     def test_run_shows_cost_summary(self):
-        """triad run displays cost and token summary."""
+        """crtx run displays cost and token summary."""
         mock_result = _make_pipeline_result()
 
         with (
@@ -256,7 +256,7 @@ class TestRun:
         assert "6,000" in result.output
 
     def test_run_domain_rules_missing_file(self):
-        """triad run errors when domain rules file doesn't exist."""
+        """crtx run errors when domain rules file doesn't exist."""
         result = runner.invoke(app, [
             "run", "test", "--domain-rules", "/nonexistent/file.toml",
         ])
@@ -264,22 +264,22 @@ class TestRun:
         assert "Domain rules file not found" in result.output
 
 
-# ── triad plan Tests ──────────────────────────────────────────────
+# ── crtx plan Tests ──────────────────────────────────────────────
 
 
 class TestPlan:
     def test_plan_requires_description(self):
-        """triad plan without args shows usage error."""
+        """crtx plan without args shows usage error."""
         result = runner.invoke(app, ["plan"])
         assert result.exit_code == 2  # missing required argument
 
 
-# ── triad estimate Tests ──────────────────────────────────────────
+# ── crtx estimate Tests ──────────────────────────────────────────
 
 
 class TestEstimate:
     def test_estimate_shows_strategies(self):
-        """triad estimate shows all 4 routing strategies."""
+        """crtx estimate shows all 4 routing strategies."""
         result = runner.invoke(app, ["estimate", "Build an API"])
         assert result.exit_code == 0
         assert "quality_first" in result.output
@@ -288,30 +288,30 @@ class TestEstimate:
         assert "hybrid" in result.output
 
     def test_estimate_shows_costs(self):
-        """triad estimate shows dollar amounts."""
+        """crtx estimate shows dollar amounts."""
         result = runner.invoke(app, ["estimate", "Build an API"])
         assert result.exit_code == 0
         assert "$" in result.output
 
     def test_estimate_shows_model_assignments(self):
-        """triad estimate shows which models are assigned."""
+        """crtx estimate shows which models are assigned."""
         result = runner.invoke(app, ["estimate", "Build an API"])
         assert result.exit_code == 0
         assert "Model Assignments" in result.output
 
     def test_estimate_invalid_mode(self):
-        """triad estimate rejects invalid mode."""
+        """crtx estimate rejects invalid mode."""
         result = runner.invoke(app, ["estimate", "test", "--mode", "bad"])
         assert result.exit_code == 1
         assert "Invalid mode" in result.output
 
 
-# ── triad models Tests ────────────────────────────────────────────
+# ── crtx models Tests ────────────────────────────────────────────
 
 
 class TestModels:
     def test_models_list_shows_all_models(self):
-        """triad models list shows all registered models."""
+        """crtx models list shows all registered models."""
         result = runner.invoke(app, ["models", "list"])
         assert result.exit_code == 0
         # Rich may truncate in narrow CliRunner terminal
@@ -321,14 +321,14 @@ class TestModels:
         assert "xai" in result.output.lower()
 
     def test_models_list_shows_fitness(self):
-        """triad models list shows fitness scores."""
+        """crtx models list shows fitness scores."""
         result = runner.invoke(app, ["models", "list"])
         assert result.exit_code == 0
         assert "Arch" in result.output
         assert "Impl" in result.output
 
     def test_models_show_valid_key(self):
-        """triad models show displays full model details."""
+        """crtx models show displays full model details."""
         result = runner.invoke(app, ["models", "show", "claude-opus"])
         assert result.exit_code == 0
         assert "Claude Opus" in result.output
@@ -336,13 +336,13 @@ class TestModels:
         assert "200,000" in result.output
 
     def test_models_show_invalid_key(self):
-        """triad models show errors on unknown key."""
+        """crtx models show errors on unknown key."""
         result = runner.invoke(app, ["models", "show", "nonexistent"])
         assert result.exit_code == 1
         assert "Model not found" in result.output
 
     def test_models_test_no_api_key(self):
-        """triad models test errors when API key not set."""
+        """crtx models test errors when API key not set."""
         with patch.dict("os.environ", {}, clear=False):
             # Ensure ANTHROPIC_API_KEY is not set
             env = dict(os.environ)
@@ -353,18 +353,18 @@ class TestModels:
         assert "API key not set" in result.output
 
     def test_models_test_invalid_key(self):
-        """triad models test errors on unknown model key."""
+        """crtx models test errors on unknown model key."""
         result = runner.invoke(app, ["models", "test", "nonexistent"])
         assert result.exit_code == 1
         assert "Model not found" in result.output
 
 
-# ── triad config Tests ────────────────────────────────────────────
+# ── crtx config Tests ────────────────────────────────────────────
 
 
 class TestConfig:
     def test_config_show(self):
-        """triad config show displays pipeline configuration."""
+        """crtx config show displays pipeline configuration."""
         result = runner.invoke(app, ["config", "show"])
         assert result.exit_code == 0
         assert "bookend" in result.output
@@ -373,7 +373,7 @@ class TestConfig:
         assert "0.70" in result.output
 
     def test_config_path(self):
-        """triad config path shows config file locations."""
+        """crtx config path shows config file locations."""
         result = runner.invoke(app, ["config", "path"])
         assert result.exit_code == 0
         # Rich may truncate long paths — check for labels
@@ -383,12 +383,12 @@ class TestConfig:
         assert "found" in result.output
 
 
-# ── triad sessions Tests ──────────────────────────────────────────
+# ── crtx sessions Tests ──────────────────────────────────────────
 
 
 class TestSessions:
     def test_sessions_list_empty(self, tmp_path):
-        """triad sessions list with no sessions shows message."""
+        """crtx sessions list with no sessions shows message."""
         db_path = str(tmp_path / "test.db")
         config = _make_config(
             persist_sessions=True,
@@ -402,7 +402,7 @@ class TestSessions:
         assert "No sessions found" in result.output
 
     def test_sessions_show_not_found(self, tmp_path):
-        """triad sessions show errors on unknown session."""
+        """crtx sessions show errors on unknown session."""
         db_path = str(tmp_path / "test.db")
         config = _make_config(
             persist_sessions=True,
@@ -416,7 +416,7 @@ class TestSessions:
         assert "Session not found" in result.output
 
     def test_sessions_export_invalid_format(self, tmp_path):
-        """triad sessions export errors on invalid format."""
+        """crtx sessions export errors on invalid format."""
         db_path = str(tmp_path / "test.db")
         config = _make_config(
             persist_sessions=True,
@@ -455,7 +455,7 @@ class TestSessions:
         assert "Invalid format" in result.output
 
     def test_sessions_delete_not_found(self, tmp_path):
-        """triad sessions delete errors on unknown session."""
+        """crtx sessions delete errors on unknown session."""
         db_path = str(tmp_path / "test.db")
         config = _make_config(
             persist_sessions=True,
@@ -480,7 +480,7 @@ class TestRenderer:
         result = _make_pipeline_result()
         md = render_summary(result)
 
-        assert "# Triad Pipeline Summary" in md
+        assert "# CRTX Pipeline Summary" in md
         assert "## Task" in md
         assert "Build a REST API" in md
         assert "## Pipeline Configuration" in md
@@ -545,7 +545,7 @@ class TestWriter:
         actual_path = write_pipeline_output(result, out_dir)
 
         summary = (Path(actual_path) / "summary.md").read_text()
-        assert "Triad Pipeline Summary" in summary
+        assert "CRTX Pipeline Summary" in summary
         assert "Build a REST API" in summary
 
     def test_write_pipeline_output_session_json(self, tmp_path):
@@ -622,6 +622,14 @@ class TestWriter:
 # ── CLI Parallel Display Tests ───────────────────────────────────
 
 
+_FAKE_PROVIDER_KEYS = {
+    "ANTHROPIC_API_KEY": "sk-test-fake",
+    "OPENAI_API_KEY": "sk-test-fake",
+    "GEMINI_API_KEY": "fake-key",
+    "XAI_API_KEY": "fake-key",
+}
+
+
 class TestCliParallelDisplay:
     """Tests for _display_result showing parallel mode results."""
 
@@ -671,10 +679,11 @@ class TestCliParallelDisplay:
         return PipelineResult(**defaults)
 
     def test_parallel_run_shows_winner(self):
-        """triad run with parallel result shows winner banner."""
+        """crtx run with parallel result shows winner banner."""
         mock_result = self._make_parallel_result()
 
         with (
+            patch.dict(os.environ, _FAKE_PROVIDER_KEYS),
             patch("triad.cli.asyncio.run", return_value=mock_result),
             patch("triad.output.writer.write_pipeline_output"),
         ):
@@ -689,10 +698,11 @@ class TestCliParallelDisplay:
         assert "model-a" in result.output
 
     def test_parallel_run_shows_votes(self):
-        """triad run with parallel result shows voting table."""
+        """crtx run with parallel result shows voting table."""
         mock_result = self._make_parallel_result()
 
         with (
+            patch.dict(os.environ, _FAKE_PROVIDER_KEYS),
             patch("triad.cli.asyncio.run", return_value=mock_result),
             patch("triad.output.writer.write_pipeline_output"),
         ):
@@ -708,10 +718,11 @@ class TestCliParallelDisplay:
         assert "Consensus Votes" in result.output or "model-b" in result.output
 
     def test_parallel_run_shows_cost(self):
-        """triad run with parallel result shows cost summary."""
+        """crtx run with parallel result shows cost summary."""
         mock_result = self._make_parallel_result()
 
         with (
+            patch.dict(os.environ, _FAKE_PROVIDER_KEYS),
             patch("triad.cli.asyncio.run", return_value=mock_result),
             patch("triad.output.writer.write_pipeline_output"),
         ):
@@ -724,6 +735,94 @@ class TestCliParallelDisplay:
 
         assert result.exit_code == 0
         assert "$0.50" in result.output
+
+    def test_parallel_run_shows_stage_and_model_counts(self):
+        """Parallel mode shows non-zero stage and model counts."""
+        mock_result = self._make_parallel_result()
+
+        with (
+            patch.dict(os.environ, _FAKE_PROVIDER_KEYS),
+            patch("triad.cli.asyncio.run", return_value=mock_result),
+            patch("triad.output.writer.write_pipeline_output"),
+        ):
+            result = runner.invoke(app, [
+                "run", "Build API",
+                "--mode", "parallel",
+                "--arbiter", "off",
+                "--no-persist",
+            ])
+
+        assert result.exit_code == 0
+        # 3 individual outputs + 1 synthesis = 4 stages
+        assert "Stages:" in result.output
+        assert "4" in result.output
+        # 3 models
+        assert "3 providers" in result.output
+
+    def test_parallel_run_shows_completed_with_rejections(self):
+        """Parallel result with REJECT verdicts shows warning status."""
+        mock_result = self._make_parallel_result(
+            arbiter_reviews=[_make_review(verdict="reject")],
+        )
+
+        with (
+            patch.dict(os.environ, _FAKE_PROVIDER_KEYS),
+            patch("triad.cli.asyncio.run", return_value=mock_result),
+            patch("triad.output.writer.write_pipeline_output"),
+        ):
+            result = runner.invoke(app, [
+                "run", "Build API",
+                "--mode", "parallel",
+                "--arbiter", "off",
+                "--no-persist",
+            ])
+
+        assert result.exit_code == 0
+        assert "COMPLETED WITH REJECTIONS" in result.output
+        assert "PIPELINE COMPLETED SUCCESSFULLY" not in result.output
+
+
+# ── CLI Completion Status Tests ──────────────────────────────────
+
+
+class TestCliCompletionStatus:
+    """Tests for _display_completion status line logic."""
+
+    def test_success_without_rejects_shows_success(self):
+        """Normal success shows green SUCCESS."""
+        mock_result = _make_pipeline_result()
+
+        with (
+            patch("triad.cli.asyncio.run", return_value=mock_result),
+            patch("triad.output.writer.write_pipeline_output"),
+        ):
+            result = runner.invoke(app, [
+                "run", "Build API",
+                "--arbiter", "off",
+                "--no-persist",
+            ])
+
+        assert result.exit_code == 0
+        assert "PIPELINE COMPLETED SUCCESSFULLY" in result.output
+
+    def test_success_with_reject_shows_warning(self):
+        """Success with REJECT verdicts shows warning status."""
+        mock_result = _make_pipeline_result(
+            arbiter_reviews=[_make_review(verdict="reject")],
+        )
+
+        with (
+            patch("triad.cli.asyncio.run", return_value=mock_result),
+            patch("triad.output.writer.write_pipeline_output"),
+        ):
+            result = runner.invoke(app, [
+                "run", "Build API",
+                "--arbiter", "bookend",
+                "--no-persist",
+            ])
+
+        assert result.exit_code == 0
+        assert "COMPLETED WITH REJECTIONS" in result.output
 
 
 # ── CLI Debate Display Tests ─────────────────────────────────────
@@ -773,10 +872,11 @@ class TestCliDebateDisplay:
         return PipelineResult(**defaults)
 
     def test_debate_run_shows_judge(self):
-        """triad run with debate result shows judge model."""
+        """crtx run with debate result shows judge model."""
         mock_result = self._make_debate_result()
 
         with (
+            patch.dict(os.environ, _FAKE_PROVIDER_KEYS),
             patch("triad.cli.asyncio.run", return_value=mock_result),
             patch("triad.output.writer.write_pipeline_output"),
         ):
@@ -791,10 +891,11 @@ class TestCliDebateDisplay:
         assert "model-c" in result.output
 
     def test_debate_run_shows_judgment(self):
-        """triad run with debate result shows judgment preview."""
+        """crtx run with debate result shows judgment preview."""
         mock_result = self._make_debate_result()
 
         with (
+            patch.dict(os.environ, _FAKE_PROVIDER_KEYS),
             patch("triad.cli.asyncio.run", return_value=mock_result),
             patch("triad.output.writer.write_pipeline_output"),
         ):
@@ -809,10 +910,11 @@ class TestCliDebateDisplay:
         assert "careful consideration" in result.output
 
     def test_debate_run_shows_cost(self):
-        """triad run with debate result shows cost summary."""
+        """crtx run with debate result shows cost summary."""
         mock_result = self._make_debate_result()
 
         with (
+            patch.dict(os.environ, _FAKE_PROVIDER_KEYS),
             patch("triad.cli.asyncio.run", return_value=mock_result),
             patch("triad.output.writer.write_pipeline_output"),
         ):
@@ -827,13 +929,14 @@ class TestCliDebateDisplay:
         assert "$0.75" in result.output
 
     def test_debate_halted_shows_halt_reason(self):
-        """triad run with halted debate shows halt reason."""
+        """crtx run with halted debate shows halt reason."""
         mock_result = self._make_debate_result(
             success=False, halted=True,
             halt_reason="Debate judgment fundamentally flawed",
         )
 
         with (
+            patch.dict(os.environ, _FAKE_PROVIDER_KEYS),
             patch("triad.cli.asyncio.run", return_value=mock_result),
             patch("triad.output.writer.write_pipeline_output"),
         ):

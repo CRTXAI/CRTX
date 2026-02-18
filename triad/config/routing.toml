@@ -1,13 +1,13 @@
-# Triad Orchestrator — Routing Policy Configuration
+# CRTX — Routing Policy Configuration
 # Controls how models are assigned to pipeline roles.
-# Override via CLI: triad run --route <strategy>
+# Override via CLI: crtx run --route <strategy>
 
 [routing]
 default_strategy = "hybrid"     # quality_first | cost_optimized | speed_first | hybrid
 min_fitness = 0.70              # Minimum fitness threshold for cost-optimized routing
 
 # Token estimates for cost estimation (conservative defaults).
-# These are used by `triad estimate` to predict run costs.
+# These are used by `crtx estimate` to predict run costs.
 [routing.token_estimates]
 architect_input = 50000
 architect_output = 8000
