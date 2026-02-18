@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
 from rich.console import Console
 from rich.text import Text
 

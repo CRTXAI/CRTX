@@ -57,18 +57,31 @@ class PostRunViewer:
         self.result = result
 
     def run(self) -> str | None:
-        """Main input loop. Returns when user presses Enter/q."""
+        """Main input loop. Returns when user presses Enter/q.
+
+        Uses single-keypress reading (msvcrt on Windows, tty on Unix)
+        so the user can press s/c/r/d/Enter without typing + Enter.
+        The first iteration skips the menu banner because the completion
+        panel already displays the key hints.
+        """
+        from triad.cli_display import _read_key
+
+        first = True
         while True:
-            self.console.print(
-                "\n[green]\\[s][/] Summary  [green]\\[c][/] Code  "
-                "[green]\\[r][/] Reviews  [green]\\[d][/] Diffs  "
-                "[green]\\[Enter][/] Exit"
-            )
+            if not first:
+                self.console.print(
+                    "\n[green]\\[s][/] Summary  [green]\\[c][/] Code  "
+                    "[green]\\[r][/] Reviews  [green]\\[d][/] Diffs  "
+                    "[green]\\[Enter][/] Exit"
+                )
+            first = False
+
             try:
-                key = input("> ").strip().lower()
+                key = _read_key()
             except (EOFError, KeyboardInterrupt):
                 break
-            if key in ("", "q"):
+
+            if key in ("enter", "q", "escape"):
                 break
             elif key == "s":
                 self._show_summary()
@@ -233,8 +246,16 @@ class PostRunViewer:
             return
 
         for review in reviews:
-            verdict_val = review.verdict.value if hasattr(review.verdict, "value") else str(review.verdict)
-            stage_val = review.stage_reviewed.value if hasattr(review.stage_reviewed, "value") else str(review.stage_reviewed)
+            verdict_val = (
+                review.verdict.value
+                if hasattr(review.verdict, "value")
+                else str(review.verdict)
+            )
+            stage_val = (
+                review.stage_reviewed.value
+                if hasattr(review.stage_reviewed, "value")
+                else str(review.stage_reviewed)
+            )
 
             v_color = _VERDICT_COLORS.get(verdict_val, "white")
             stage_color = _STAGE_COLORS.get(stage_val, "white")
@@ -253,8 +274,16 @@ class PostRunViewer:
             if review.issues:
                 body_parts.append("\n**Issues:**")
                 for issue in review.issues:
-                    sev = issue.severity.value.upper() if hasattr(issue.severity, "value") else str(issue.severity)
-                    cat = issue.category.value if hasattr(issue.category, "value") else str(issue.category)
+                    sev = (
+                        issue.severity.value.upper()
+                        if hasattr(issue.severity, "value")
+                        else str(issue.severity)
+                    )
+                    cat = (
+                        issue.category.value
+                        if hasattr(issue.category, "value")
+                        else str(issue.category)
+                    )
                     loc = f" at `{issue.location}`" if issue.location else ""
                     body_parts.append(f"- **[{sev}]** [{cat}]{loc}: {issue.description}")
                     if issue.suggestion:

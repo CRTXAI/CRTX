@@ -7,6 +7,7 @@ All output is Rich-powered with color-coded panels and tables.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 from pathlib import Path
@@ -32,13 +33,13 @@ from rich.text import Text
 from triad import __version__
 from triad.keys import load_keys_env
 from triad.providers.registry import load_models, load_pipeline_config
+from triad.schemas.consensus import DebateResult, ParallelResult
 from triad.schemas.pipeline import (
     ArbiterMode,
     PipelineConfig,
     PipelineMode,
     TaskSpec,
 )
-from triad.schemas.consensus import DebateResult, ParallelResult
 from triad.schemas.routing import RoutingStrategy
 
 # Load API keys from ~/.crtx/keys.env and .env on startup
@@ -136,6 +137,47 @@ def _verdict_style(verdict: str) -> str:
         "reject": "bold red",
         "halt": "bold bright_red",
     }.get(verdict.lower(), "white")
+
+
+_DASHBOARD_PORT = 8420
+
+
+def _attach_dashboard_relay(emitter) -> None:
+    """If a local dashboard server is running, relay events to it.
+
+    Probes ``localhost:8420`` with a fast HTTP request. On success,
+    registers an async listener that POSTs each event to the
+    dashboard's ``/api/events`` ingest endpoint (via a thread-pool
+    executor so it never blocks the pipeline).
+    """
+    import urllib.error
+    import urllib.request
+
+    url = f"http://localhost:{_DASHBOARD_PORT}/api/events"
+    probe = f"http://localhost:{_DASHBOARD_PORT}/api/config"
+
+    # Quick probe — skip relay if dashboard is not running
+    try:
+        urllib.request.urlopen(probe, timeout=0.5)  # noqa: S310
+    except (urllib.error.URLError, OSError):
+        return
+
+    async def _relay(event) -> None:
+        try:
+            data = json.dumps(event.model_dump(), default=str).encode()
+            req = urllib.request.Request(
+                url, data=data,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None, lambda: urllib.request.urlopen(req, timeout=1),  # noqa: S310
+            )
+        except Exception:
+            pass  # Dashboard may have shut down — ignore silently
+
+    emitter.add_listener(_relay)
 
 
 # ── crtx setup ───────────────────────────────────────────────────
@@ -486,7 +528,7 @@ def run(
     base_config = _load_config()
 
     # Resolve preset with flag overrides
-    from triad.presets import PRESETS, resolve_preset
+    from triad.presets import resolve_preset
 
     try:
         mode, route, arbiter = resolve_preset(
@@ -597,12 +639,15 @@ def run(
     interactive = is_interactive()
     emitter = PipelineEventEmitter()
 
-    # Attach ProAgent for dashboard event forwarding (if configured)
+    # Attach ProAgent for cloud event forwarding (if configured)
     from triad.pro.agent import ProAgent
 
     _pro_agent = ProAgent.from_config()
     if _pro_agent:
         emitter.add_listener(_pro_agent.create_listener())
+
+    # Relay events to local dashboard server (if running)
+    _attach_dashboard_relay(emitter)
 
     # Streaming display selection
     use_streaming = (
@@ -935,7 +980,8 @@ def _display_completion(
         # debaters + judge
         debater_count = len(result.debate_result.proposals)
         judge = result.debate_result.judge_model
-        model_count = debater_count + (1 if judge and judge not in result.debate_result.proposals else 0)
+        judge_extra = 1 if judge and judge not in result.debate_result.proposals else 0
+        model_count = debater_count + judge_extra
 
     # Build verdicts line
     verdicts_parts: list[str] = []
@@ -1010,7 +1056,6 @@ def _display_result(result) -> None:
 
 def _display_apply_result(result) -> None:
     """Display the result of an apply operation."""
-    from triad.schemas.apply import ApplyResult
 
     if result.errors:
         for err in result.errors:
@@ -1116,6 +1161,7 @@ def _load_session_result(session_dir: Path) -> object | None:
         return None
     try:
         import json
+
         from triad.schemas.pipeline import PipelineResult
         data = json.loads(session_json.read_text(encoding="utf-8"))
         return PipelineResult.model_validate(data)
@@ -1702,7 +1748,7 @@ def sessions_list(
         return
 
     table = Table(title=f"Sessions ({len(summaries)} shown)")
-    table.add_column("Session ID", style="cyan", max_width=12)
+    table.add_column("ID", style="cyan", no_wrap=True)
     table.add_column("Task", max_width=40)
     table.add_column("Mode", style="dim")
     table.add_column("Status")
@@ -1718,8 +1764,9 @@ def sessions_list(
         else:
             status = Text("FAIL", style="red")
 
+        short_id = s.session_id[:8]
         table.add_row(
-            s.session_id[:12] + "...",
+            short_id,
             s.task_preview[:40],
             s.pipeline_mode,
             status,
@@ -1733,7 +1780,7 @@ def sessions_list(
 
 @sessions_app.command("show")
 def sessions_show(
-    session_id: str = typer.Argument(..., help="Session ID to show"),
+    session_id: str = typer.Argument(..., help="Session ID or prefix (min 4 chars)"),
 ) -> None:
     """Show full session details."""
     from triad.persistence.database import close_db, init_db
@@ -1814,7 +1861,7 @@ def sessions_show(
 
 @sessions_app.command("export")
 def sessions_export(
-    session_id: str = typer.Argument(..., help="Session ID to export"),
+    session_id: str = typer.Argument(..., help="Session ID or prefix (min 4 chars)"),
     fmt: str = typer.Option(
         "markdown", "--format", "-f",
         help="Export format: json or markdown",
@@ -1851,7 +1898,7 @@ def sessions_export(
 
 @sessions_app.command("delete")
 def sessions_delete(
-    session_id: str = typer.Argument(..., help="Session ID to delete"),
+    session_id: str = typer.Argument(..., help="Session ID or prefix (min 4 chars)"),
     yes: bool = typer.Option(
         False, "--yes", "-y",
         help="Skip confirmation prompt",
@@ -2202,6 +2249,7 @@ def review_code(
 
     interactive = is_interactive()
     emitter = PipelineEventEmitter()
+    _attach_dashboard_relay(emitter)
 
     try:
         if interactive:
@@ -2232,8 +2280,14 @@ def review_code(
 
     actual_path = write_pipeline_output(pipeline_result, output_dir)
 
-    # Display completion
+    # Display completion + interactive viewer
     _display_completion(pipeline_result, actual_path)
+
+    if interactive:
+        from triad.post_run_viewer import PostRunViewer
+
+        viewer = PostRunViewer(console, Path(actual_path), pipeline_result)
+        viewer.run()
 
 
 # ── Improve ─────────────────────────────────────────────────────
@@ -2382,6 +2436,7 @@ def improve(
 
     interactive = is_interactive()
     emitter = PipelineEventEmitter()
+    _attach_dashboard_relay(emitter)
 
     try:
         if interactive:
@@ -2428,8 +2483,14 @@ def improve(
         apply_result = engine.run()
         _display_apply_result(apply_result)
 
-    # Display completion
+    # Display completion + interactive viewer
     _display_completion(pipeline_result, actual_path)
+
+    if interactive:
+        from triad.post_run_viewer import PostRunViewer
+
+        viewer = PostRunViewer(console, Path(actual_path), pipeline_result)
+        viewer.run()
 
 
 # ── Dashboard ────────────────────────────────────────────────────

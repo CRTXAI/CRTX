@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
-from triad.apply.git import GitSafetyGate, _PROTECTED_BRANCHES
+from triad.apply.git import _PROTECTED_BRANCHES, GitSafetyGate
 from triad.schemas.apply import GitState
 
 

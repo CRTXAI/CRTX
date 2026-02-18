@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from unittest.mock import MagicMock, patch
-
 import pytest
 from rich.console import Console
 
 from triad.apply.engine import ApplyEngine
-from triad.schemas.apply import ApplyConfig, FileAction
+from triad.schemas.apply import ApplyConfig
 from triad.schemas.messages import (
     AgentMessage,
     CodeBlock,
@@ -105,18 +102,34 @@ class TestApplyEngine:
     def test_apply_blocked_by_reject(self, console, tmp_path):
         """Apply is blocked when arbiter issued REJECT verdict in a git repo."""
         import subprocess
+
         from triad.schemas.arbiter import ArbiterReview, Verdict
 
         # Set up a git repo so ensure_safe actually checks verdicts
         subprocess.run(["git", "init"], cwd=str(tmp_path), capture_output=True, check=True)
-        subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=str(tmp_path), capture_output=True, check=True)
-        subprocess.run(["git", "config", "user.name", "T"], cwd=str(tmp_path), capture_output=True, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "t@t.com"],
+            cwd=str(tmp_path), capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "T"],
+            cwd=str(tmp_path), capture_output=True, check=True,
+        )
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "main.py").write_text("# old\n")
-        subprocess.run(["git", "add", "."], cwd=str(tmp_path), capture_output=True, check=True)
-        subprocess.run(["git", "commit", "-m", "init"], cwd=str(tmp_path), capture_output=True, check=True)
+        subprocess.run(
+            ["git", "add", "."],
+            cwd=str(tmp_path), capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "init"],
+            cwd=str(tmp_path), capture_output=True, check=True,
+        )
         # Move off protected branch
-        subprocess.run(["git", "checkout", "-b", "feature"], cwd=str(tmp_path), capture_output=True, check=True)
+        subprocess.run(
+            ["git", "checkout", "-b", "feature"],
+            cwd=str(tmp_path), capture_output=True, check=True,
+        )
 
         result = _make_result(tmp_path)
         result.arbiter_reviews = [

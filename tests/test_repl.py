@@ -6,7 +6,7 @@ and welcome screen status dashboard.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from triad.repl import _VALID_ARBITERS, _VALID_MODES, _VALID_ROUTES, TriadREPL
 

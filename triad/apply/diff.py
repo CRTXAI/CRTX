@@ -367,6 +367,6 @@ class ConflictResolver:
 
         self._console.print(Panel(
             text,
-            title=f"[bold]Changes since scan[/bold]",
+            title="[bold]Changes since scan[/bold]",
             border_style="yellow",
         ))

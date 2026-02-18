@@ -142,9 +142,12 @@ class SessionStore:
         logger.info("Saved session %s", record.session_id)
 
     async def get_session(self, session_id: str) -> SessionRecord | None:
-        """Retrieve a full session record by ID.
+        """Retrieve a full session record by ID or unique ID prefix.
 
-        Returns None if the session does not exist.
+        Tries an exact match first.  If that fails and the input is at
+        least 4 characters, falls back to a prefix match.  Returns None
+        when no match is found or the prefix is ambiguous (matches more
+        than one session).
         """
         self._db.row_factory = aiosqlite.Row
         async with self._db.execute(
@@ -152,6 +155,17 @@ class SessionStore:
             (session_id,),
         ) as cursor:
             row = await cursor.fetchone()
+
+        # Fall back to prefix match
+        if not row and len(session_id) >= 4:
+            async with self._db.execute(
+                "SELECT * FROM sessions WHERE session_id LIKE ?"
+                " ORDER BY started_at DESC LIMIT 2",
+                (session_id + "%",),
+            ) as cursor:
+                rows = await cursor.fetchall()
+            if len(rows) == 1:
+                row = rows[0]
 
         if not row:
             return None
@@ -215,19 +229,51 @@ class SessionStore:
 
         return summaries
 
+    async def resolve_session_id(self, prefix: str) -> str | None:
+        """Resolve a session ID prefix to a full session ID.
+
+        Returns the full ID if exactly one match is found, None otherwise.
+        Accepts full IDs as well (exact match always wins).
+        """
+        self._db.row_factory = aiosqlite.Row
+        # Exact match first
+        async with self._db.execute(
+            "SELECT session_id FROM sessions WHERE session_id = ?",
+            (prefix,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row:
+            return row["session_id"]
+        # Prefix match
+        if len(prefix) >= 4:
+            async with self._db.execute(
+                "SELECT session_id FROM sessions WHERE session_id LIKE ?"
+                " LIMIT 2",
+                (prefix + "%",),
+            ) as cursor:
+                rows = await cursor.fetchall()
+            if len(rows) == 1:
+                return rows[0]["session_id"]
+        return None
+
     async def delete_session(self, session_id: str) -> bool:
         """Delete a session and all related records.
 
-        Returns True if a session was deleted, False if it didn't exist.
+        Supports both full IDs and unique prefixes (>= 4 chars).
+        Returns True if a session was deleted, False if it didn't exist
+        or the prefix was ambiguous.
         """
+        full_id = await self.resolve_session_id(session_id)
+        if not full_id:
+            return False
         cursor = await self._db.execute(
             "DELETE FROM sessions WHERE session_id = ?",
-            (session_id,),
+            (full_id,),
         )
         await self._db.commit()
         deleted = cursor.rowcount > 0
         if deleted:
-            logger.info("Deleted session %s", session_id)
+            logger.info("Deleted session %s", full_id)
         return deleted
 
     async def export_session(self, session_id: str) -> dict | None:

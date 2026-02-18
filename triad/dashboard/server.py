@@ -38,7 +38,7 @@ def create_app() -> Any:
     so the module can be imported without dashboard deps installed.
     """
     try:
-        from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+        from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
         from fastapi.middleware.cors import CORSMiddleware
         from fastapi.responses import FileResponse, HTMLResponse
     except ImportError as exc:
@@ -48,7 +48,7 @@ def create_app() -> Any:
         ) from exc
 
     app = FastAPI(
-        title="Triad Dashboard",
+        title="CRTX Dashboard",
         description="Real-time pipeline visualization",
     )
 
@@ -122,6 +122,29 @@ def create_app() -> Any:
                 len(connected_clients),
             )
 
+    # ── Event Ingest (CLI → Dashboard bridge) ────────────────────
+
+    @app.post("/api/events")
+    async def ingest_events(request: Request) -> dict:
+        """Accept pipeline events POSTed from CLI processes.
+
+        The CLI runs in a separate process with its own emitter.
+        This endpoint bridges the gap: the CLI's relay listener
+        POSTs events here, and this handler stores them in the
+        server's emitter history and broadcasts to WebSocket clients.
+        """
+        try:
+            body = await request.json()
+            items = body if isinstance(body, list) else [body]
+            for raw in items:
+                event = PipelineEvent.model_validate(raw)
+                _emitter._history.append(event)
+                await _broadcast(event)
+            return {"accepted": len(items)}
+        except Exception:
+            logger.exception("Failed to ingest events")
+            return {"error": "Invalid event payload"}
+
     # ── REST API ─────────────────────────────────────────────────
 
     @app.get("/api/sessions")
@@ -130,9 +153,11 @@ def create_app() -> Any:
         try:
             from triad.persistence.database import close_db, init_db
             from triad.persistence.session import SessionStore
+            from triad.providers.registry import load_pipeline_config
             from triad.schemas.session import SessionQuery
 
-            db = await init_db()
+            config = load_pipeline_config()
+            db = await init_db(config.session_db_path)
             store = SessionStore(db)
             summaries = await store.list_sessions(SessionQuery(limit=50))
             await close_db(db)
@@ -147,8 +172,10 @@ def create_app() -> Any:
         try:
             from triad.persistence.database import close_db, init_db
             from triad.persistence.session import SessionStore
+            from triad.providers.registry import load_pipeline_config
 
-            db = await init_db()
+            config = load_pipeline_config()
+            db = await init_db(config.session_db_path)
             store = SessionStore(db)
             record = await store.get_session(session_id)
             await close_db(db)

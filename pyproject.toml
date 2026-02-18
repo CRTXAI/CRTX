@@ -56,10 +56,28 @@ target-version = "py312"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "UP", "B", "SIM"]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "S"]
+ignore = [
+    "SIM102",   # nested if — combining reduces readability in filter/match patterns
+    "SIM105",   # contextlib.suppress — try/except/pass is clearer for one-liners
+    "SIM108",   # ternary — multi-line if/else is clearer for formatted strings
+    "SIM117",   # nested with — 3-deep context managers don't flatten well
+    "S603",     # subprocess call — args are controlled, not user input
+    "S607",     # partial executable path — git/uvicorn are standard PATH tools
+    "S108",     # /tmp hardcoded — false positive on temp path references
+    "S110",     # try-except-pass — intentional best-effort (chmod, etc.)
+    "S310",     # URL audit — URLs come from config, not user input
+    "S104",     # bind 0.0.0.0 — intentional for local dashboard server
+    "S105",     # hardcoded password — false positive on enum value names
+    "S608",     # SQL injection — query uses parameterized ? placeholders
+    "S701",     # Jinja2 autoescape — templates are Markdown prompts, not HTML
+]
 
 [tool.ruff.lint.per-file-ignores]
 "triad/cli.py" = ["B008"]
+"triad/orchestrator.py" = ["N806"]                          # _MAX_SYNTH_RETRIES constant in function
+"triad/providers/litellm_provider.py" = ["E402", "N806"]    # imports after suppress_debug_info, _FILEPATH_ONLY
+"tests/**" = ["S101"]                                       # assert is the whole point of tests
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

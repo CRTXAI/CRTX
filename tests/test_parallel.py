@@ -1031,7 +1031,7 @@ class TestParallelEventEmissions:
                 registry=registry,
                 event_emitter=emitter,
             )
-            result = await orch.run()
+            await orch.run()
 
         event_types = [e.type for e in emitter.history]
         assert "pipeline_started" in event_types
@@ -1152,18 +1152,6 @@ class TestParallelFallback:
     async def test_fallback_on_primary_failure(self):
         """If the primary model fails, fallback to another model."""
         registry = _make_three_model_registry()
-        # Extend full registry with an extra fallback model
-        full_registry = {
-            **registry,
-            "fallback": _make_model_config(
-                model="fallback-v1",
-                fitness=RoleFitness(
-                    architect=0.6, implementer=0.6,
-                    refactorer=0.6, verifier=0.6,
-                ),
-            ),
-        }
-
         # First call fails (primary), then all subsequent succeed
         fail_then_succeed = AsyncMock(
             side_effect=[

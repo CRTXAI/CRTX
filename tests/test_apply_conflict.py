@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 from rich.console import Console
 
 from triad.apply.conflict import ConflictDetector
 from triad.apply.diff import ConflictResolver
-from triad.schemas.apply import ConflictAction, FileConflict, Resolution
+from triad.schemas.apply import ConflictAction, FileConflict
 
 
 class TestConflictDetector:

@@ -22,7 +22,6 @@ from triad.dashboard.events import EventListener, EventType, PipelineEvent
 from triad.schemas.messages import PipelineStage
 from triad.schemas.streaming import StreamChunk
 
-
 # ── Stage state tracking ──────────────────────────────────────────
 
 

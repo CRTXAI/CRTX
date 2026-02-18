@@ -20,14 +20,13 @@ import time
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
 
 from triad.arbiter.arbiter import ArbiterEngine
 from triad.arbiter.feedback import format_arbiter_feedback
 from triad.arbiter.reconciler import ReconciliationEngine
-from triad.providers.health import ProviderHealth
 from triad.consensus.protocol import ConsensusEngine
 from triad.prompts import render_prompt
+from triad.providers.health import ProviderHealth
 from triad.providers.litellm_provider import LiteLLMProvider, _short_error_reason
 from triad.routing.engine import RoutingEngine
 from triad.schemas.arbiter import ArbiterReview, Verdict

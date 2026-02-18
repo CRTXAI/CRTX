@@ -11,8 +11,6 @@ import logging
 from pathlib import Path
 
 from rich.console import Console
-from rich.panel import Panel
-from rich.text import Text
 
 from triad.apply.conflict import ConflictDetector
 from triad.apply.diff import ConflictResolver, DiffPreview
@@ -25,8 +23,6 @@ from triad.schemas.apply import (
     ConflictAction,
     FileAction,
     FileConflict,
-    GitState,
-    ResolvedFile,
 )
 from triad.schemas.pipeline import PipelineResult
 

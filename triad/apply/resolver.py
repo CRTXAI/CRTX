@@ -15,7 +15,6 @@ from pathlib import Path
 from triad.schemas.apply import ApplyConfig, FileAction, ResolvedFile
 from triad.schemas.messages import CodeBlock
 
-
 # Regex for detecting substantive code (function/class definitions)
 _HAS_DEFINITION = re.compile(
     r"^\s*(?:def |class |function |const |let |var |pub fn |fn |async def )",

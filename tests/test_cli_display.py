@@ -12,6 +12,11 @@ from rich.console import Console
 from rich.text import Text
 
 from triad.cli_display import (
+    _DEBATE_PHASE_LABELS,
+    _DEBATE_PHASE_ORDER,
+    _PARALLEL_PHASE_LABELS,
+    _PARALLEL_PHASE_ORDER,
+    _STAGE_ORDER,
     BRAND,
     COMPACT_LOGO_TEMPLATE,
     FULL_LOGO,
@@ -19,11 +24,6 @@ from triad.cli_display import (
     CompletionSummary,
     ConfigScreen,
     PipelineDisplay,
-    _DEBATE_PHASE_LABELS,
-    _DEBATE_PHASE_ORDER,
-    _PARALLEL_PHASE_LABELS,
-    _PARALLEL_PHASE_ORDER,
-    _STAGE_ORDER,
     _verdict_color,
     render_compact_logo,
     render_full_logo,

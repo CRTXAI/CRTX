@@ -25,7 +25,6 @@ from triad.schemas.pipeline import (
     TaskSpec,
 )
 
-
 # ── Factories ──────────────────────────────────────────────────────
 
 

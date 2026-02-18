@@ -10,7 +10,6 @@ from __future__ import annotations
 import ast
 import difflib
 import logging
-import re
 from pathlib import Path
 
 from triad.schemas.apply import PatchAnchor, PatchOperation, PatchResult, StructuredPatch
@@ -121,10 +120,7 @@ class ASTPatcher:
                 for node in ast.walk(tree):
                     if anchor.anchor_type == "function" and isinstance(
                         node, (ast.FunctionDef, ast.AsyncFunctionDef)
-                    ):
-                        if node.name == anchor.value:
-                            return node.lineno - 1, "ast"
-                    elif anchor.anchor_type == "class" and isinstance(
+                    ) or anchor.anchor_type == "class" and isinstance(
                         node, ast.ClassDef
                     ):
                         if node.name == anchor.value:

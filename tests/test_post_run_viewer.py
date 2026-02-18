@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -211,12 +210,15 @@ class TestRunDirect:
         viewer.run_direct("diffs")
 
 
+_READ_KEY = "triad.cli_display._read_key"
+
+
 class TestRunLoop:
     def test_run_enter_exits(self, session_dir, mock_result):
         console = Console(quiet=True)
         viewer = PostRunViewer(console, session_dir, mock_result)
 
-        with patch("builtins.input", return_value=""):
+        with patch(_READ_KEY, return_value="enter"):
             result = viewer.run()
             assert result is None
 
@@ -224,7 +226,15 @@ class TestRunLoop:
         console = Console(quiet=True)
         viewer = PostRunViewer(console, session_dir, mock_result)
 
-        with patch("builtins.input", return_value="q"):
+        with patch(_READ_KEY, return_value="q"):
+            result = viewer.run()
+            assert result is None
+
+    def test_run_escape_exits(self, session_dir, mock_result):
+        console = Console(quiet=True)
+        viewer = PostRunViewer(console, session_dir, mock_result)
+
+        with patch(_READ_KEY, return_value="escape"):
             result = viewer.run()
             assert result is None
 
@@ -233,8 +243,8 @@ class TestRunLoop:
         console = Console(quiet=True)
         viewer = PostRunViewer(console, session_dir, mock_result)
 
-        # First input: 's' (view summary), second: '' (exit)
-        with patch("builtins.input", side_effect=["s", ""]):
+        # First keypress: 's' (view summary), second: 'enter' (exit)
+        with patch(_READ_KEY, side_effect=["s", "enter"]):
             result = viewer.run()
             assert result is None
 
@@ -244,7 +254,7 @@ class TestRunLoop:
         viewer = PostRunViewer(console, session_dir, mock_result)
 
         # summary → reviews → diffs → exit
-        with patch("builtins.input", side_effect=["s", "r", "d", ""]):
+        with patch(_READ_KEY, side_effect=["s", "r", "d", "enter"]):
             result = viewer.run()
             assert result is None
 
@@ -252,6 +262,6 @@ class TestRunLoop:
         console = Console(quiet=True)
         viewer = PostRunViewer(console, session_dir, mock_result)
 
-        with patch("builtins.input", side_effect=EOFError):
+        with patch(_READ_KEY, side_effect=EOFError):
             result = viewer.run()
             assert result is None
