@@ -32,3 +32,5 @@ triad-output/
 api/
 supabase/
 package-lock.json
+crtx-output/
+triad-output/
