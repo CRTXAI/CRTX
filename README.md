@@ -7,6 +7,10 @@
 <!-- <p align="center"><img src="assets/demo.gif" alt="CRTX CLI demo" width="700"/></p> -->
 
 <p align="center">
+  <strong>CRTX</strong> (/kôr'teks/) — the outer layer of the brain responsible for reasoning, judgment, and decision-making. The part that reviews its own work.
+</p>
+
+<p align="center">
   <strong>Multi-model AI orchestration for code generation — route tasks through specialized LLM agents with consensus, adversarial review, and an independent Arbiter layer.</strong>
 </p>
 
