@@ -19,6 +19,8 @@ from triad.cli_display import (
     CompletionSummary,
     ConfigScreen,
     PipelineDisplay,
+    _DEBATE_PHASE_LABELS,
+    _DEBATE_PHASE_ORDER,
     _PARALLEL_PHASE_LABELS,
     _PARALLEL_PHASE_ORDER,
     _STAGE_ORDER,
@@ -511,6 +513,145 @@ class TestParallelPipelineDisplay:
         display = PipelineDisplay(console, "sequential", "hybrid", "bookend")
         assert set(display._stages.keys()) == set(_STAGE_ORDER)
         assert display._is_parallel is False
+
+
+# ── Debate PipelineDisplay ───────────────────────────────────────
+
+
+class TestDebatePipelineDisplay:
+    """Tests for PipelineDisplay in debate mode."""
+
+    def _make_display(self):
+        console = Console(file=MagicMock(), force_terminal=True, width=120)
+        return PipelineDisplay(console, "debate", "hybrid", "full")
+
+    def test_debate_initializes_phase_rows(self):
+        """Debate mode initializes _stages with all debate phase keys."""
+        display = self._make_display()
+        assert set(display._stages.keys()) == set(_DEBATE_PHASE_ORDER)
+        for phase in _DEBATE_PHASE_ORDER:
+            assert display._stages[phase]["status"] == "pending"
+
+    def test_debate_proposals_event_updates_row(self):
+        """stage_started with debate_proposals sets proposals to running."""
+        display = self._make_display()
+        listener = display.create_listener()
+
+        listener(PipelineEvent(
+            type=EventType.STAGE_STARTED,
+            data={"stage": "debate_proposals", "model": "3 debaters"},
+        ))
+
+        assert display._stages["proposals"]["status"] == "running"
+        assert display._stages["proposals"]["model"] == "3 debaters"
+
+    def test_debate_proposals_completed(self):
+        """stage_completed with debate_proposals sets proposals to done."""
+        display = self._make_display()
+        listener = display.create_listener()
+
+        listener(PipelineEvent(
+            type=EventType.STAGE_COMPLETED,
+            data={"stage": "debate_proposals", "duration": 10.0, "cost": 0.05},
+        ))
+
+        assert display._stages["proposals"]["status"] == "done"
+        assert display._stages["proposals"]["duration"] == 10.0
+
+    def test_debate_rebuttals_events(self):
+        """Rebuttal start/complete updates the rebuttals row."""
+        display = self._make_display()
+        listener = display.create_listener()
+
+        listener(PipelineEvent(
+            type=EventType.STAGE_STARTED,
+            data={"stage": "debate_rebuttals", "model": "3 rebuttals"},
+        ))
+        assert display._stages["rebuttals"]["status"] == "running"
+
+        listener(PipelineEvent(
+            type=EventType.STAGE_COMPLETED,
+            data={"stage": "debate_rebuttals", "duration": 12.0, "cost": 0.06},
+        ))
+        assert display._stages["rebuttals"]["status"] == "done"
+
+    def test_debate_final_arguments_events(self):
+        """Final arguments start/complete updates the final_args row."""
+        display = self._make_display()
+        listener = display.create_listener()
+
+        listener(PipelineEvent(
+            type=EventType.STAGE_STARTED,
+            data={"stage": "debate_final_arguments", "model": "3 models"},
+        ))
+        assert display._stages["final_args"]["status"] == "running"
+
+        listener(PipelineEvent(
+            type=EventType.STAGE_COMPLETED,
+            data={"stage": "debate_final_arguments", "duration": 8.0, "cost": 0.04},
+        ))
+        assert display._stages["final_args"]["status"] == "done"
+
+    def test_debate_judgment_events(self):
+        """Judgment start/complete updates the judgment row."""
+        display = self._make_display()
+        listener = display.create_listener()
+
+        listener(PipelineEvent(
+            type=EventType.STAGE_STARTED,
+            data={"stage": "debate_judgment", "model": "gpt-4o"},
+        ))
+        assert display._stages["judgment"]["status"] == "running"
+
+        listener(PipelineEvent(
+            type=EventType.STAGE_COMPLETED,
+            data={"stage": "debate_judgment", "model": "gpt-4o", "duration": 15.0, "cost": 0.08},
+        ))
+        assert display._stages["judgment"]["status"] == "done"
+
+    def test_debate_arbiter_updates_row(self):
+        """arbiter_started/verdict updates the arbiter row in debate mode."""
+        display = self._make_display()
+        listener = display.create_listener()
+
+        listener(PipelineEvent(
+            type=EventType.ARBITER_STARTED,
+            data={"stage": "verify", "arbiter_model": "claude-opus"},
+        ))
+        assert display._stages["arbiter"]["status"] == "running"
+        assert display._stages["arbiter"]["model"] == "claude-opus"
+
+        listener(PipelineEvent(
+            type=EventType.ARBITER_VERDICT,
+            data={"stage": "verify", "verdict": "approve", "confidence": 0.9},
+        ))
+        assert display._stages["arbiter"]["status"] == "done"
+
+    def test_debate_phase_labels_in_output(self):
+        """Rendered table uses debate phase labels like Position Papers, Rebuttals."""
+        display = self._make_display()
+        console = Console(file=MagicMock(), force_terminal=True, width=120)
+        with console.capture() as capture:
+            console.print(display._build_status_panel())
+        output = capture.get()
+
+        for label in _DEBATE_PHASE_LABELS.values():
+            assert label in output, f"Expected '{label}' in rendered output"
+        assert "Phase" in output
+
+    def test_debate_build_display_renders(self):
+        """_build_display() produces output without errors in debate mode."""
+        display = self._make_display()
+        result = display._build_display()
+        assert result is not None
+
+    def test_sequential_mode_still_unchanged(self):
+        """Sequential mode is unaffected by debate additions."""
+        console = Console(file=MagicMock(), force_terminal=True, width=120)
+        display = PipelineDisplay(console, "sequential", "hybrid", "bookend")
+        assert set(display._stages.keys()) == set(_STAGE_ORDER)
+        assert display._is_parallel is False
+        assert display._is_debate is False
 
 
 # ── CompletionSummary ────────────────────────────────────────────

@@ -206,12 +206,9 @@ class ArbiterEngine:
                 f"'{stage_model}' (excluded={exclude})"
             )
 
-        # Pick the candidate with the highest average fitness
-        def _avg_fitness(cfg: ModelConfig) -> float:
-            f = cfg.fitness
-            return (f.architect + f.implementer + f.refactorer + f.verifier) / 4
-
-        best_key = max(candidates, key=lambda k: _avg_fitness(candidates[k]))
+        # Pick the candidate with the highest verifier fitness — the
+        # arbiter's job is adversarial review, which maps to verifier.
+        best_key = max(candidates, key=lambda k: candidates[k].fitness.verifier)
         return best_key
 
 

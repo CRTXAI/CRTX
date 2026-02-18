@@ -11,6 +11,7 @@ from pathlib import Path
 
 from triad.output.renderer import render_summary
 from triad.output.writer import write_pipeline_output
+from triad.schemas.arbiter import ArbiterReview, Verdict
 from triad.schemas.consensus import DebateResult, ParallelResult
 from triad.schemas.messages import (
     AgentMessage,
@@ -504,3 +505,58 @@ class TestWriterFallbackContent:
 
         code_files = list(Path(actual_path, "code").glob("*"))
         assert len(code_files) >= 1
+
+
+# ── Renderer: Status line logic ──────────────────────────────────
+
+
+def _make_arbiter_review(verdict: Verdict) -> ArbiterReview:
+    return ArbiterReview(
+        stage_reviewed=PipelineStage.VERIFY,
+        reviewed_model="test-model-v1",
+        arbiter_model="arbiter-model-v1",
+        verdict=verdict,
+        confidence=0.85,
+        reasoning="Test reasoning.",
+        token_cost=0.01,
+    )
+
+
+class TestRendererStatus:
+
+    def test_success_with_reject_shows_completed_with_rejections(self):
+        """Success + reject arbiter review → COMPLETED WITH REJECTIONS."""
+        result = PipelineResult(
+            task=_make_task(),
+            config=_make_config(),
+            success=True,
+            halted=False,
+            arbiter_reviews=[_make_arbiter_review(Verdict.REJECT)],
+        )
+        md = render_summary(result)
+        assert "COMPLETED WITH REJECTIONS" in md
+
+    def test_success_without_reject_shows_success(self):
+        """Success with APPROVE review → SUCCESS."""
+        result = PipelineResult(
+            task=_make_task(),
+            config=_make_config(),
+            success=True,
+            halted=False,
+            arbiter_reviews=[_make_arbiter_review(Verdict.APPROVE)],
+        )
+        md = render_summary(result)
+        assert "## Result: SUCCESS" in md
+
+    def test_halted_still_shows_halted(self):
+        """Halted pipeline → HALTED regardless of reviews."""
+        result = PipelineResult(
+            task=_make_task(),
+            config=_make_config(),
+            success=False,
+            halted=True,
+            halt_reason="Critical issue",
+            arbiter_reviews=[_make_arbiter_review(Verdict.HALT)],
+        )
+        md = render_summary(result)
+        assert "## Result: HALTED" in md

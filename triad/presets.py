@@ -22,6 +22,8 @@ _MODE_SHORT = {
     "sequential": "seq",
     "parallel": "par",
     "debate": "deb",
+    "review": "rev",
+    "improve": "imp",
 }
 
 _ROUTE_SHORT = {

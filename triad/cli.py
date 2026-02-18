@@ -924,11 +924,18 @@ def _display_completion(
         model_set.add(d.model_key)
     model_count = len(model_set) or len(result.stages)
 
-    # Parallel mode: derive from parallel_result since stages/routing_decisions are empty
+    # Parallel/debate modes: derive from result objects since stages/routing_decisions are empty
     stage_count = len(result.stages)
     if result.parallel_result and not stage_count:
         stage_count = len(result.parallel_result.individual_outputs) + 1  # fan-out + synthesis
         model_count = len(result.parallel_result.individual_outputs)
+    elif result.debate_result and not stage_count:
+        # proposals + rebuttals + final_args + judgment = 4 phases
+        stage_count = 4
+        # debaters + judge
+        debater_count = len(result.debate_result.proposals)
+        judge = result.debate_result.judge_model
+        model_count = debater_count + (1 if judge and judge not in result.debate_result.proposals else 0)
 
     # Build verdicts line
     verdicts_parts: list[str] = []
@@ -2041,6 +2048,388 @@ def review(
     exit_code = format_exit_code(review_result, fail_on)
     if exit_code != 0:
         raise typer.Exit(exit_code) from None
+
+
+# ── File Reading Helper ──────────────────────────────────────────
+
+
+def _read_source_files(paths: list[str]) -> str:
+    """Read source files into a single block with # file: headers."""
+    parts: list[str] = []
+    for p in paths:
+        path = Path(p)
+        if path.is_dir():
+            for f in sorted(path.rglob("*.py")):
+                parts.append(f"# file: {f}\n{f.read_text(encoding='utf-8')}")
+        elif path.is_file():
+            parts.append(f"# file: {path}\n{path.read_text(encoding='utf-8')}")
+        else:
+            console.print(f"[red]Not found:[/red] {p}")
+            raise typer.Exit(1)
+    if not parts:
+        console.print("[red]No source files found.[/red]")
+        raise typer.Exit(1)
+    return "\n\n".join(parts)
+
+
+# ── Review Code ─────────────────────────────────────────────────
+
+
+@app.command()
+def review_code(
+    files: list[str] = typer.Argument(..., help="Files or directories to review"),
+    focus: str = typer.Option(
+        None, "--focus", "-f",
+        help="Review focus area (e.g. 'security', 'performance')",
+    ),
+    preset: str = typer.Option(
+        None, "--preset", "-p",
+        help="Pipeline preset (used for route/arbiter only)",
+    ),
+    route: str = typer.Option(
+        None, "--route", "-r",
+        help="Override routing: quality_first, cost_optimized, speed_first, hybrid",
+    ),
+    arbiter: str = typer.Option(
+        None, "--arbiter", "-a",
+        help="Override arbiter: off, final_only, bookend, full",
+    ),
+    arbiter_model: str = typer.Option(
+        "", "--arbiter-model",
+        help="Pin a specific model for all Arbiter reviews",
+    ),
+    output_dir: str = typer.Option(
+        "crtx-output", "--output-dir", "-o",
+        help="Directory for output files",
+    ),
+    timeout: int = typer.Option(
+        300, "--timeout", "-t",
+        help="Default per-model timeout in seconds",
+    ),
+    no_persist: bool = typer.Option(
+        False, "--no-persist",
+        help="Disable session persistence",
+    ),
+) -> None:
+    """Run multi-model code review on source files.
+
+    Multiple AI models independently analyze the code, cross-review each
+    other's findings, and produce a unified review with deduplicated,
+    severity-ranked findings.
+    """
+    from triad.keys import has_any_key
+
+    if not has_any_key():
+        console.print(
+            "[red]No API keys configured.[/red] "
+            "Run [bold]crtx setup[/bold] to get started."
+        )
+        raise typer.Exit(1) from None
+
+    # Read source files
+    source_code = _read_source_files(files)
+
+    from triad.cli_display import PipelineDisplay
+
+    registry = _load_registry()
+    base_config = _load_config()
+
+    # Resolve preset — force mode=review, only use route/arbiter
+    from triad.presets import resolve_preset
+
+    try:
+        _, resolved_route, resolved_arbiter = resolve_preset(
+            preset or "explore", mode=None, route=route, arbiter=arbiter,
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from None
+
+    try:
+        routing_strategy = RoutingStrategy(resolved_route)
+    except ValueError:
+        console.print(f"[red]Invalid routing strategy:[/red] '{resolved_route}'")
+        raise typer.Exit(1) from None
+
+    try:
+        arbiter_mode_val = ArbiterMode(resolved_arbiter)
+    except ValueError:
+        console.print(f"[red]Invalid arbiter mode:[/red] '{resolved_arbiter}'")
+        raise typer.Exit(1) from None
+
+    # Pre-flight check: need multiple models
+    from triad.orchestrator import _select_top_models
+
+    selected = _select_top_models(registry, 3)
+    reachable = [
+        key for key, cfg in selected.items()
+        if os.environ.get(cfg.api_key_env)
+    ]
+    if len(reachable) < 2:
+        console.print(Panel(
+            "[bold red]Review mode requires at least 2 reachable models.[/bold red]\n\n"
+            "Run [bold]crtx setup[/bold] to add more provider keys.",
+            title="Review Mode Unavailable",
+            border_style="red",
+        ))
+        raise typer.Exit(1) from None
+
+    # Build task — source code goes in context so templates receive it
+    task_desc = "Review this code"
+    if focus:
+        task_desc += f" with focus on: {focus}"
+
+    config = PipelineConfig(
+        pipeline_mode=PipelineMode.REVIEW,
+        arbiter_mode=arbiter_mode_val,
+        default_timeout=timeout,
+        routing_strategy=routing_strategy,
+        arbiter_model=arbiter_model or base_config.arbiter_model,
+        persist_sessions=not no_persist,
+        session_db_path=base_config.session_db_path,
+    )
+
+    task_spec = TaskSpec(
+        task=task_desc,
+        context=source_code,
+        output_dir=output_dir,
+    )
+
+    # Run pipeline
+    from triad.cli_display import is_interactive
+    from triad.dashboard.events import PipelineEventEmitter
+    from triad.orchestrator import run_pipeline
+
+    interactive = is_interactive()
+    emitter = PipelineEventEmitter()
+
+    try:
+        if interactive:
+            mode_str = "review"
+            display = PipelineDisplay(
+                console, mode_str, resolved_route, resolved_arbiter,
+            )
+            emitter.add_listener(display.create_listener())
+            with display:
+                pipeline_result = asyncio.run(
+                    run_pipeline(task_spec, config, registry, emitter),
+                )
+        else:
+            with console.status("[bold blue]Running review...", spinner="dots"):
+                pipeline_result = asyncio.run(
+                    run_pipeline(task_spec, config, registry, emitter),
+                )
+    except RuntimeError as exc:
+        console.print(Panel(
+            f"[bold red]{exc}[/bold red]",
+            title="Review Error",
+            border_style="red",
+        ))
+        raise typer.Exit(1) from None
+
+    # Write output
+    from triad.output.writer import write_pipeline_output
+
+    actual_path = write_pipeline_output(pipeline_result, output_dir)
+
+    # Display completion
+    _display_completion(pipeline_result, actual_path)
+
+
+# ── Improve ─────────────────────────────────────────────────────
+
+
+@app.command()
+def improve(
+    files: list[str] = typer.Argument(..., help="Files or directories to improve"),
+    focus: str = typer.Option(
+        None, "--focus", "-f",
+        help="Improvement focus area (e.g. 'performance', 'error handling')",
+    ),
+    preset: str = typer.Option(
+        None, "--preset", "-p",
+        help="Pipeline preset (used for route/arbiter only)",
+    ),
+    route: str = typer.Option(
+        None, "--route", "-r",
+        help="Override routing: quality_first, cost_optimized, speed_first, hybrid",
+    ),
+    arbiter: str = typer.Option(
+        None, "--arbiter", "-a",
+        help="Override arbiter: off, final_only, bookend, full",
+    ),
+    arbiter_model: str = typer.Option(
+        "", "--arbiter-model",
+        help="Pin a specific model for all Arbiter reviews",
+    ),
+    output_dir: str = typer.Option(
+        "crtx-output", "--output-dir", "-o",
+        help="Directory for output files",
+    ),
+    timeout: int = typer.Option(
+        300, "--timeout", "-t",
+        help="Default per-model timeout in seconds",
+    ),
+    no_persist: bool = typer.Option(
+        False, "--no-persist",
+        help="Disable session persistence",
+    ),
+    apply: bool = typer.Option(
+        False, "--apply",
+        help="Apply improved code to the source files",
+    ),
+    confirm: bool = typer.Option(
+        True, "--confirm/--no-confirm",
+        help="Interactive confirmation before writing",
+    ),
+    branch: str = typer.Option(
+        "", "--branch",
+        help="Create a git branch for applied changes",
+    ),
+) -> None:
+    """Run multi-model code improvement on source files.
+
+    Multiple AI models independently produce improved versions of the code,
+    cross-review each other's improvements, vote on the best approach, and
+    synthesize a final improved version. Use --apply to write changes back.
+    """
+    from triad.keys import has_any_key
+
+    if not has_any_key():
+        console.print(
+            "[red]No API keys configured.[/red] "
+            "Run [bold]crtx setup[/bold] to get started."
+        )
+        raise typer.Exit(1) from None
+
+    # Read source files
+    source_code = _read_source_files(files)
+
+    from triad.cli_display import PipelineDisplay
+
+    registry = _load_registry()
+    base_config = _load_config()
+
+    # Resolve preset — force mode=improve, only use route/arbiter
+    from triad.presets import resolve_preset
+
+    try:
+        _, resolved_route, resolved_arbiter = resolve_preset(
+            preset or "explore", mode=None, route=route, arbiter=arbiter,
+        )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from None
+
+    try:
+        routing_strategy = RoutingStrategy(resolved_route)
+    except ValueError:
+        console.print(f"[red]Invalid routing strategy:[/red] '{resolved_route}'")
+        raise typer.Exit(1) from None
+
+    try:
+        arbiter_mode_val = ArbiterMode(resolved_arbiter)
+    except ValueError:
+        console.print(f"[red]Invalid arbiter mode:[/red] '{resolved_arbiter}'")
+        raise typer.Exit(1) from None
+
+    # Pre-flight check: need multiple models
+    from triad.orchestrator import _select_top_models
+
+    selected = _select_top_models(registry, 3)
+    reachable = [
+        key for key, cfg in selected.items()
+        if os.environ.get(cfg.api_key_env)
+    ]
+    if len(reachable) < 2:
+        console.print(Panel(
+            "[bold red]Improve mode requires at least 2 reachable models.[/bold red]\n\n"
+            "Run [bold]crtx setup[/bold] to add more provider keys.",
+            title="Improve Mode Unavailable",
+            border_style="red",
+        ))
+        raise typer.Exit(1) from None
+
+    # Determine context_dir from first file's parent (for apply)
+    context_dir = str(Path(files[0]).resolve().parent)
+
+    # Build task — source code goes in context
+    task_desc = "Improve this code"
+    if focus:
+        task_desc += f" with focus on: {focus}"
+
+    config = PipelineConfig(
+        pipeline_mode=PipelineMode.IMPROVE,
+        arbiter_mode=arbiter_mode_val,
+        default_timeout=timeout,
+        routing_strategy=routing_strategy,
+        arbiter_model=arbiter_model or base_config.arbiter_model,
+        persist_sessions=not no_persist,
+        session_db_path=base_config.session_db_path,
+        context_dir=context_dir if apply else None,
+    )
+
+    task_spec = TaskSpec(
+        task=task_desc,
+        context=source_code,
+        output_dir=output_dir,
+    )
+
+    # Run pipeline
+    from triad.cli_display import is_interactive
+    from triad.dashboard.events import PipelineEventEmitter
+    from triad.orchestrator import run_pipeline
+
+    interactive = is_interactive()
+    emitter = PipelineEventEmitter()
+
+    try:
+        if interactive:
+            mode_str = "improve"
+            display = PipelineDisplay(
+                console, mode_str, resolved_route, resolved_arbiter,
+            )
+            emitter.add_listener(display.create_listener())
+            with display:
+                pipeline_result = asyncio.run(
+                    run_pipeline(task_spec, config, registry, emitter),
+                )
+        else:
+            with console.status("[bold blue]Running improvement...", spinner="dots"):
+                pipeline_result = asyncio.run(
+                    run_pipeline(task_spec, config, registry, emitter),
+                )
+    except RuntimeError as exc:
+        console.print(Panel(
+            f"[bold red]{exc}[/bold red]",
+            title="Improve Error",
+            border_style="red",
+        ))
+        raise typer.Exit(1) from None
+
+    # Write output
+    from triad.output.writer import write_pipeline_output
+
+    actual_path = write_pipeline_output(pipeline_result, output_dir)
+
+    # Apply mode
+    if apply:
+        from triad.apply.engine import ApplyEngine
+        from triad.schemas.apply import ApplyConfig
+
+        apply_config = ApplyConfig(
+            enabled=True,
+            confirm=confirm,
+            branch=branch,
+        )
+        engine = ApplyEngine(
+            pipeline_result, apply_config, context_dir, console, interactive,
+        )
+        apply_result = engine.run()
+        _display_apply_result(apply_result)
+
+    # Display completion
+    _display_completion(pipeline_result, actual_path)
 
 
 # ── Dashboard ────────────────────────────────────────────────────

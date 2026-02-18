@@ -34,7 +34,9 @@ from triad.schemas.arbiter import ArbiterReview, Verdict
 from triad.schemas.consensus import (
     ConsensusResult,
     DebateResult,
+    ImproveResult,
     ParallelResult,
+    ReviewResult,
     SuggestionDecision,
     SuggestionVerdict,
 )
@@ -1219,11 +1221,9 @@ class ParallelOrchestrator:
                         synth_msg = await self._call_model(
                             synth_key,
                             synth_cfg,
-                            "parallel_synthesize",
+                            "parallel_synthesis_retry",
                             timeout,
-                            winner_model=winner,
-                            winning_output=individual_outputs[winner],
-                            other_outputs=other_outputs,
+                            previous_synthesis=synthesized_output,
                             arbiter_feedback=feedback,
                         )
                         all_messages.append(synth_msg)
@@ -1807,6 +1807,779 @@ class DebateOrchestrator:
         )
 
 
+# ── Review Orchestrator ──────────────────────────────────────────
+
+
+class ReviewOrchestrator:
+    """Multi-model code review pipeline mode.
+
+    All models independently analyze the source code, cross-review each
+    other's analyses, and a synthesizer merges everything into a unified
+    review. Optional arbiter review of the synthesis.
+    """
+
+    _MAX_REVIEW_MODELS = 3
+
+    def __init__(
+        self,
+        task: TaskSpec,
+        config: PipelineConfig,
+        registry: dict[str, ModelConfig],
+        event_emitter: object | None = None,
+    ) -> None:
+        self._task = task
+        self._config = config
+        self._full_registry = registry
+        self._registry = _select_top_models(registry, self._MAX_REVIEW_MODELS)
+        self._emitter = event_emitter
+        self._health = ProviderHealth()
+        self._arbiter = ArbiterEngine(config, registry, health=self._health)
+
+    async def _emit(self, event_type: str, **data: object) -> None:
+        """Emit a dashboard event if an emitter is attached."""
+        if self._emitter is not None:
+            await self._emitter.emit(event_type, **data)
+
+    async def run(self) -> PipelineResult:
+        """Execute the review pipeline."""
+        start = time.monotonic()
+        arbiter_reviews: list[ArbiterReview] = []
+        all_messages: list[AgentMessage] = []
+        timeout = self._config.default_timeout
+
+        # Extract source_code and focus from task/context
+        source_code = self._task.context or ""
+        focus = ""
+
+        await self._emit(
+            "pipeline_started",
+            mode="review",
+            task_summary=self._task.task[:200],
+            models=list(self._registry.keys()),
+        )
+
+        # Phase 1: Fan-out — all models analyze independently
+        logger.info("Review fan-out: %d models", len(self._registry))
+        await self._emit(
+            "stage_started",
+            stage="parallel_fan_out",
+            model=f"{len(self._registry)} models",
+        )
+        individual_analyses: dict[str, str] = {}
+        fan_out_tasks = {}
+        for key, cfg in self._registry.items():
+            fan_out_tasks[key] = self._call_model(
+                key, cfg, "review_analyze", timeout,
+                source_code=source_code,
+                focus=focus,
+            )
+
+        results = await asyncio.gather(
+            *fan_out_tasks.values(), return_exceptions=True,
+        )
+        for key, result in zip(fan_out_tasks, results, strict=True):
+            if isinstance(result, Exception):
+                logger.error("Model %s failed in review fan-out: %s", key, result)
+                await self._emit(
+                    "error",
+                    stage="parallel_fan_out",
+                    error=f"{key} failed: {result}",
+                )
+                continue
+            individual_analyses[key] = result.content
+            all_messages.append(result)
+
+        fan_out_cost = sum(
+            m.token_usage.cost for m in all_messages if m.token_usage
+        )
+        await self._emit(
+            "stage_completed",
+            stage="parallel_fan_out",
+            model=f"{len(individual_analyses)} succeeded",
+            duration=time.monotonic() - start,
+            cost=fan_out_cost,
+        )
+
+        if len(individual_analyses) == 0:
+            raise RuntimeError(
+                "Review mode: all models failed during analysis"
+            )
+
+        # Phase 2: Cross-review — each model reviews others' analyses
+        logger.info("Review cross-review")
+        await self._emit(
+            "stage_started",
+            stage="parallel_cross_review",
+            model=f"{len(individual_analyses)} reviewers",
+        )
+        cross_reviews: dict[str, dict[str, str]] = {}
+        review_tasks = []
+        review_keys: list[tuple[str, str]] = []
+
+        for reviewer_key in self._registry:
+            if reviewer_key not in individual_analyses:
+                continue
+            reviewer_cfg = self._registry[reviewer_key]
+            for reviewed_key, analysis in individual_analyses.items():
+                if reviewed_key == reviewer_key:
+                    continue
+                review_tasks.append(
+                    self._call_model(
+                        reviewer_key,
+                        reviewer_cfg,
+                        "review_cross_review",
+                        timeout,
+                        source_code=source_code,
+                        analysis_under_review=analysis,
+                        reviewer_model=reviewed_key,
+                    )
+                )
+                review_keys.append((reviewer_key, reviewed_key))
+
+        review_results = await asyncio.gather(
+            *review_tasks, return_exceptions=True,
+        )
+        for (reviewer, reviewed), result in zip(
+            review_keys, review_results, strict=True,
+        ):
+            if isinstance(result, Exception):
+                logger.error(
+                    "Cross-review %s->%s failed: %s", reviewer, reviewed, result,
+                )
+                continue
+            all_messages.append(result)
+            if reviewer not in cross_reviews:
+                cross_reviews[reviewer] = {}
+            cross_reviews[reviewer][reviewed] = result.content
+
+        review_cost = sum(
+            m.token_usage.cost for m in all_messages if m.token_usage
+        ) - fan_out_cost
+        await self._emit(
+            "stage_completed",
+            stage="parallel_cross_review",
+            model=f"{len(review_keys)} reviews",
+            duration=time.monotonic() - start,
+            cost=review_cost,
+        )
+
+        # Phase 3: Synthesis — merge all analyses
+        synth_key = "gpt-4o"
+        synth_cfg = self._full_registry.get(synth_key)
+        if synth_cfg is None:
+            synth_key = next(iter(individual_analyses))
+            synth_cfg = self._registry[synth_key]
+        logger.info("Review synthesis by %s", synth_key)
+        await self._emit(
+            "stage_started",
+            stage="parallel_synthesis",
+            model=synth_key,
+        )
+
+        synth_msg = await self._call_model(
+            synth_key,
+            synth_cfg,
+            "review_synthesize",
+            timeout,
+            source_code=source_code,
+            all_analyses=individual_analyses,
+            focus=focus,
+        )
+        all_messages.append(synth_msg)
+        synthesized_review = synth_msg.content
+
+        synth_cost = synth_msg.token_usage.cost if synth_msg.token_usage else 0.0
+        await self._emit(
+            "stage_completed",
+            stage="parallel_synthesis",
+            model=synth_key,
+            duration=time.monotonic() - start,
+            cost=synth_cost,
+        )
+
+        # Phase 4: Arbiter review of synthesis
+        if self._config.arbiter_mode != ArbiterMode.OFF:
+            review = await self._arbiter.review(
+                stage=PipelineStage.VERIFY,
+                stage_model=synth_cfg.model,
+                stage_output=synthesized_review,
+                task=self._task,
+            )
+            if review is not None:
+                arbiter_reviews.append(review)
+
+        # Build result
+        duration = time.monotonic() - start
+        total_cost = sum(
+            m.token_usage.cost for m in all_messages if m.token_usage
+        ) + sum(r.token_cost for r in arbiter_reviews)
+        total_tokens = sum(
+            (m.token_usage.prompt_tokens + m.token_usage.completion_tokens)
+            for m in all_messages
+            if m.token_usage
+        )
+
+        halted = any(r.verdict == Verdict.HALT for r in arbiter_reviews)
+
+        if not halted:
+            await self._emit(
+                "pipeline_completed",
+                success=True,
+                total_cost=total_cost,
+                total_tokens=total_tokens,
+                duration=duration,
+            )
+
+        return PipelineResult(
+            task=self._task,
+            config=self._config,
+            total_cost=total_cost,
+            total_tokens=total_tokens,
+            duration_seconds=duration,
+            success=not halted,
+            arbiter_reviews=arbiter_reviews,
+            halted=halted,
+            halt_reason=(
+                arbiter_reviews[-1].reasoning
+                if halted and arbiter_reviews
+                else ""
+            ),
+            review_result=ReviewResult(
+                individual_analyses=individual_analyses,
+                cross_reviews=cross_reviews,
+                synthesized_review=synthesized_review,
+            ),
+        )
+
+    _MAX_CALL_ATTEMPTS = 2
+
+    async def _call_model(
+        self,
+        model_key: str,
+        model_config: ModelConfig,
+        template_name: str,
+        timeout: int,
+        **template_vars: object,
+    ) -> AgentMessage:
+        """Call a model with a rendered prompt template."""
+        tpl_vars: dict = {
+            "task": self._task.task,
+            "context": self._task.context,
+            "domain_context": self._task.domain_rules,
+            **template_vars,
+        }
+        system = render_prompt(template_name, **tpl_vars)
+        tried: list[str] = []
+
+        for attempt in range(self._MAX_CALL_ATTEMPTS):
+            if attempt == 0:
+                cfg = model_config
+                key = model_key
+            else:
+                candidates = {
+                    k: v for k, v in self._full_registry.items()
+                    if k not in tried and self._health.is_healthy(k)
+                }
+                if not candidates:
+                    break
+                key = max(
+                    candidates,
+                    key=lambda k: candidates[k].fitness.verifier,
+                )
+                cfg = candidates[key]
+                logger.info(
+                    "Review fallback %s → %s", model_key, key,
+                )
+
+            tried.append(key)
+            try:
+                provider = LiteLLMProvider(cfg)
+                msg = await provider.complete(
+                    messages=[{
+                        "role": "user",
+                        "content": (
+                            "Execute the task as described "
+                            "in your system instructions."
+                        ),
+                    }],
+                    system=system,
+                    timeout=timeout,
+                )
+                msg.from_agent = PipelineStage.ARCHITECT
+                msg.to_agent = PipelineStage.ARCHITECT
+                msg.msg_type = MessageType.PROPOSAL
+                msg.confidence = _extract_confidence(msg.content)
+                return msg
+            except (RuntimeError, TimeoutError) as e:
+                self._health.mark_unhealthy(key)
+                logger.warning(
+                    "%s failed in review call (%s), %s",
+                    key,
+                    _short_error_reason(e),
+                    "falling back" if attempt < self._MAX_CALL_ATTEMPTS - 1 else "giving up",
+                )
+                last_error = e
+
+        raise RuntimeError(
+            f"All models failed for review {template_name}: "
+            f"tried {tried}. Last error: {last_error}"
+        )
+
+
+# ── Improve Orchestrator ────────────────────────────────────────
+
+
+class ImproveOrchestrator:
+    """Multi-model code improvement pipeline mode.
+
+    All models independently produce improved versions of the source code,
+    cross-review each other's improvements, vote on a winner, and the
+    winning approach is synthesized with the best elements from others.
+    Follows the same pattern as ParallelOrchestrator.
+    """
+
+    _MAX_IMPROVE_MODELS = 3
+
+    def __init__(
+        self,
+        task: TaskSpec,
+        config: PipelineConfig,
+        registry: dict[str, ModelConfig],
+        event_emitter: object | None = None,
+    ) -> None:
+        self._task = task
+        self._config = config
+        self._full_registry = registry
+        self._registry = _select_top_models(registry, self._MAX_IMPROVE_MODELS)
+        self._emitter = event_emitter
+        self._health = ProviderHealth()
+        self._arbiter = ArbiterEngine(config, registry, health=self._health)
+        self._consensus = ConsensusEngine(config, registry)
+
+    async def _emit(self, event_type: str, **data: object) -> None:
+        """Emit a dashboard event if an emitter is attached."""
+        if self._emitter is not None:
+            await self._emitter.emit(event_type, **data)
+
+    async def run(self) -> PipelineResult:
+        """Execute the improve pipeline."""
+        start = time.monotonic()
+        arbiter_reviews: list[ArbiterReview] = []
+        all_messages: list[AgentMessage] = []
+        timeout = self._config.default_timeout
+
+        # Extract source_code and focus from task/context
+        source_code = self._task.context or ""
+        focus = ""
+
+        await self._emit(
+            "pipeline_started",
+            mode="improve",
+            task_summary=self._task.task[:200],
+            models=list(self._registry.keys()),
+        )
+
+        # Phase 1: Fan-out — all models generate improvements in parallel
+        logger.info("Improve fan-out: %d models", len(self._registry))
+        await self._emit(
+            "stage_started",
+            stage="parallel_fan_out",
+            model=f"{len(self._registry)} models",
+        )
+        individual_outputs: dict[str, str] = {}
+        fan_out_tasks = {}
+        for key, cfg in self._registry.items():
+            fan_out_tasks[key] = self._call_model(
+                key, cfg, "improve_generate", timeout,
+                source_code=source_code,
+                focus=focus,
+            )
+
+        results = await asyncio.gather(
+            *fan_out_tasks.values(), return_exceptions=True,
+        )
+        for key, result in zip(fan_out_tasks, results, strict=True):
+            if isinstance(result, Exception):
+                logger.error("Model %s failed in improve fan-out: %s", key, result)
+                await self._emit(
+                    "error",
+                    stage="parallel_fan_out",
+                    error=f"{key} failed: {result}",
+                )
+                continue
+            individual_outputs[key] = result.content
+            all_messages.append(result)
+
+        fan_out_cost = sum(
+            m.token_usage.cost for m in all_messages if m.token_usage
+        )
+        await self._emit(
+            "stage_completed",
+            stage="parallel_fan_out",
+            model=f"{len(individual_outputs)} succeeded",
+            duration=time.monotonic() - start,
+            cost=fan_out_cost,
+        )
+
+        if len(individual_outputs) == 0:
+            raise RuntimeError(
+                "Improve mode: all models failed during generation"
+            )
+
+        if len(individual_outputs) == 1:
+            sole_key = next(iter(individual_outputs))
+            sole_output = individual_outputs[sole_key]
+            logger.warning(
+                "Improve fan-out: only %s succeeded, falling back to single-model output",
+                sole_key,
+            )
+            duration = time.monotonic() - start
+            total_cost = sum(
+                m.token_usage.cost for m in all_messages if m.token_usage
+            )
+            total_tokens = sum(
+                (m.token_usage.prompt_tokens + m.token_usage.completion_tokens)
+                for m in all_messages
+                if m.token_usage
+            )
+            await self._emit(
+                "pipeline_completed",
+                success=True,
+                total_cost=total_cost,
+                total_tokens=total_tokens,
+                duration=duration,
+            )
+            return PipelineResult(
+                task=self._task,
+                config=self._config,
+                total_cost=total_cost,
+                total_tokens=total_tokens,
+                duration_seconds=duration,
+                success=True,
+                arbiter_reviews=arbiter_reviews,
+                improve_result=ImproveResult(
+                    individual_outputs=individual_outputs,
+                    scores={},
+                    votes={sole_key: sole_key},
+                    winner=sole_key,
+                    synthesized_output=sole_output,
+                ),
+            )
+
+        # Phase 2: Cross-review — each model scores the others
+        logger.info("Improve cross-review")
+        await self._emit(
+            "stage_started",
+            stage="parallel_cross_review",
+            model=f"{len(individual_outputs)} reviewers",
+        )
+        scores: dict[str, dict[str, dict[str, int]]] = {}
+        review_tasks = []
+        review_keys: list[tuple[str, str]] = []
+
+        for reviewer_key in self._registry:
+            if reviewer_key not in individual_outputs:
+                continue
+            reviewer_cfg = self._registry[reviewer_key]
+            for reviewed_key, output in individual_outputs.items():
+                if reviewed_key == reviewer_key:
+                    continue
+                review_tasks.append(
+                    self._call_model(
+                        reviewer_key,
+                        reviewer_cfg,
+                        "improve_cross_review",
+                        timeout,
+                        source_code=source_code,
+                        output_under_review=output,
+                        reviewer_model=reviewed_key,
+                    )
+                )
+                review_keys.append((reviewer_key, reviewed_key))
+
+        review_results = await asyncio.gather(
+            *review_tasks, return_exceptions=True,
+        )
+        for (reviewer, reviewed), result in zip(
+            review_keys, review_results, strict=True,
+        ):
+            if isinstance(result, Exception):
+                logger.error(
+                    "Improve review %s->%s failed: %s", reviewer, reviewed, result,
+                )
+                continue
+            all_messages.append(result)
+            if reviewer not in scores:
+                scores[reviewer] = {}
+            scores[reviewer][reviewed] = _extract_scores(result.content)
+
+        review_cost = sum(
+            m.token_usage.cost for m in all_messages if m.token_usage
+        ) - fan_out_cost
+        await self._emit(
+            "stage_completed",
+            stage="parallel_cross_review",
+            model=f"{len(review_keys)} reviews",
+            duration=time.monotonic() - start,
+            cost=review_cost,
+        )
+
+        # Phase 3: Vote — derive votes from scores
+        votes: dict[str, str] = {}
+        for voter, voter_scores in scores.items():
+            if not voter_scores:
+                continue
+            votes[voter] = max(
+                voter_scores,
+                key=lambda k: sum(voter_scores[k].values()),
+            )
+
+        # Phase 4: Resolve consensus
+        consensus_result = await self._consensus.resolve_consensus(
+            votes=votes,
+            task=self._task.task,
+            candidate_outputs=individual_outputs,
+        )
+        winner = consensus_result.winner
+        logger.info("Improve winner: %s (method=%s)", winner, consensus_result.method)
+
+        await self._emit(
+            "consensus_vote",
+            votes=votes,
+            winner=winner,
+            method=consensus_result.method,
+        )
+
+        # Phase 5: Synthesis — merge winning output with best ideas
+        synth_key = "gpt-4o"
+        synth_cfg = self._full_registry.get(synth_key)
+        if synth_cfg is None:
+            synth_key = winner
+            synth_cfg = self._registry[winner]
+        logger.info("Improve synthesis by %s", synth_key)
+        await self._emit(
+            "stage_started",
+            stage="parallel_synthesis",
+            model=synth_key,
+        )
+        winner_cfg = self._registry[winner]
+        other_outputs = {
+            k: v for k, v in individual_outputs.items() if k != winner
+        }
+        synth_msg = await self._call_model(
+            synth_key,
+            synth_cfg,
+            "improve_synthesize",
+            timeout,
+            source_code=source_code,
+            winner_model=winner,
+            winning_output=individual_outputs[winner],
+            other_outputs=other_outputs,
+        )
+        all_messages.append(synth_msg)
+        synthesized_output = synth_msg.content
+
+        synth_cost = synth_msg.token_usage.cost if synth_msg.token_usage else 0.0
+        await self._emit(
+            "stage_completed",
+            stage="parallel_synthesis",
+            model=synth_key,
+            duration=time.monotonic() - start,
+            cost=synth_cost,
+        )
+
+        # Phase 6: Arbiter review + retry on REJECT
+        _MAX_SYNTH_RETRIES = 2
+        final_reject = False
+
+        if self._config.arbiter_mode != ArbiterMode.OFF:
+            review = await self._arbiter.review(
+                stage=PipelineStage.VERIFY,
+                stage_model=winner_cfg.model,
+                stage_output=synthesized_output,
+                task=self._task,
+            )
+            if review is not None:
+                arbiter_reviews.append(review)
+
+                if review.verdict == Verdict.REJECT:
+                    for retry in range(1, _MAX_SYNTH_RETRIES + 1):
+                        logger.info(
+                            "Retrying improve synthesis (attempt %d/%d) after REJECT",
+                            retry, _MAX_SYNTH_RETRIES,
+                        )
+                        feedback = format_arbiter_feedback(review, retry)
+                        await self._emit(
+                            "stage_started",
+                            stage="parallel_synthesis_retry",
+                            model=synth_key,
+                        )
+                        synth_msg = await self._call_model(
+                            synth_key,
+                            synth_cfg,
+                            "parallel_synthesis_retry",
+                            timeout,
+                            previous_synthesis=synthesized_output,
+                            arbiter_feedback=feedback,
+                        )
+                        all_messages.append(synth_msg)
+                        synthesized_output = synth_msg.content
+
+                        retry_cost = synth_msg.token_usage.cost if synth_msg.token_usage else 0.0
+                        await self._emit(
+                            "stage_completed",
+                            stage="parallel_synthesis_retry",
+                            model=synth_key,
+                            duration=time.monotonic() - start,
+                            cost=retry_cost,
+                        )
+
+                        review = await self._arbiter.review(
+                            stage=PipelineStage.VERIFY,
+                            stage_model=winner_cfg.model,
+                            stage_output=synthesized_output,
+                            task=self._task,
+                        )
+                        if review is not None:
+                            arbiter_reviews.append(review)
+                            if review.verdict != Verdict.REJECT:
+                                break
+                        else:
+                            break
+
+                    final_reject = (
+                        review is not None
+                        and review.verdict == Verdict.REJECT
+                    )
+                    if final_reject:
+                        logger.warning(
+                            "Improve synthesis still REJECTED after %d retries",
+                            _MAX_SYNTH_RETRIES,
+                        )
+
+        # Build result
+        duration = time.monotonic() - start
+        total_cost = sum(
+            m.token_usage.cost for m in all_messages if m.token_usage
+        ) + sum(r.token_cost for r in arbiter_reviews)
+        total_tokens = sum(
+            (m.token_usage.prompt_tokens + m.token_usage.completion_tokens)
+            for m in all_messages
+            if m.token_usage
+        )
+
+        halted = any(r.verdict == Verdict.HALT for r in arbiter_reviews)
+
+        if not halted:
+            await self._emit(
+                "pipeline_completed",
+                success=True,
+                total_cost=total_cost,
+                total_tokens=total_tokens,
+                duration=duration,
+            )
+
+        return PipelineResult(
+            task=self._task,
+            config=self._config,
+            total_cost=total_cost,
+            total_tokens=total_tokens,
+            duration_seconds=duration,
+            success=not halted,
+            arbiter_reviews=arbiter_reviews,
+            halted=halted,
+            halt_reason=(
+                arbiter_reviews[-1].reasoning
+                if halted and arbiter_reviews
+                else ""
+            ),
+            improve_result=ImproveResult(
+                individual_outputs=individual_outputs,
+                scores=scores,
+                votes=votes,
+                winner=winner,
+                synthesized_output=synthesized_output,
+            ),
+        )
+
+    _MAX_CALL_ATTEMPTS = 2
+
+    async def _call_model(
+        self,
+        model_key: str,
+        model_config: ModelConfig,
+        template_name: str,
+        timeout: int,
+        **template_vars: object,
+    ) -> AgentMessage:
+        """Call a model with a rendered prompt template."""
+        tpl_vars: dict = {
+            "task": self._task.task,
+            "context": self._task.context,
+            "domain_context": self._task.domain_rules,
+            **template_vars,
+        }
+        system = render_prompt(template_name, **tpl_vars)
+        tried: list[str] = []
+
+        for attempt in range(self._MAX_CALL_ATTEMPTS):
+            if attempt == 0:
+                cfg = model_config
+                key = model_key
+            else:
+                candidates = {
+                    k: v for k, v in self._full_registry.items()
+                    if k not in tried and self._health.is_healthy(k)
+                }
+                if not candidates:
+                    break
+                key = max(
+                    candidates,
+                    key=lambda k: (
+                        candidates[k].fitness.architect
+                        + candidates[k].fitness.implementer
+                    ) / 2,
+                )
+                cfg = candidates[key]
+                logger.info(
+                    "Improve fallback %s → %s", model_key, key,
+                )
+
+            tried.append(key)
+            try:
+                provider = LiteLLMProvider(cfg)
+                msg = await provider.complete(
+                    messages=[{
+                        "role": "user",
+                        "content": (
+                            "Execute the task as described "
+                            "in your system instructions."
+                        ),
+                    }],
+                    system=system,
+                    timeout=timeout,
+                )
+                msg.from_agent = PipelineStage.ARCHITECT
+                msg.to_agent = PipelineStage.ARCHITECT
+                msg.msg_type = MessageType.PROPOSAL
+                msg.confidence = _extract_confidence(msg.content)
+                return msg
+            except (RuntimeError, TimeoutError) as e:
+                self._health.mark_unhealthy(key)
+                logger.warning(
+                    "%s failed in improve call (%s), %s",
+                    key,
+                    _short_error_reason(e),
+                    "falling back" if attempt < self._MAX_CALL_ATTEMPTS - 1 else "giving up",
+                )
+                last_error = e
+
+        raise RuntimeError(
+            f"All models failed for improve {template_name}: "
+            f"tried {tried}. Last error: {last_error}"
+        )
+
+
 # ── Pipeline Dispatcher ──────────────────────────────────────────
 
 
@@ -1849,6 +2622,14 @@ async def run_pipeline(
         if config.arbiter_mode == ArbiterMode.BOOKEND:
             config = config.model_copy(update={"arbiter_mode": ArbiterMode.FULL})
         result = await DebateOrchestrator(
+            task, config, registry, event_emitter,
+        ).run()
+    elif config.pipeline_mode == PipelineMode.REVIEW:
+        result = await ReviewOrchestrator(
+            task, config, registry, event_emitter,
+        ).run()
+    elif config.pipeline_mode == PipelineMode.IMPROVE:
+        result = await ImproveOrchestrator(
             task, config, registry, event_emitter,
         ).run()
     else:

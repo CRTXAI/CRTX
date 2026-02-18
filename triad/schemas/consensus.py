@@ -84,6 +84,59 @@ class DebateResult(BaseModel):
     )
 
 
+class ReviewResult(BaseModel):
+    """Result from the review pipeline mode.
+
+    Captures each model's independent analysis, cross-reviews of other
+    models' analyses, and the synthesized final review.
+    """
+
+    individual_analyses: dict[str, str] = Field(
+        default_factory=dict,
+        description="Model key → independent code analysis",
+    )
+    cross_reviews: dict[str, dict[str, str]] = Field(
+        default_factory=dict,
+        description="Reviewer model key → {reviewed model key: cross-review text}",
+    )
+    synthesized_review: str = Field(
+        default="",
+        description="Final synthesized review merging all analyses",
+    )
+
+
+class ImproveResult(BaseModel):
+    """Result from the improve pipeline mode.
+
+    Captures each model's improvement proposal, cross-review scores,
+    consensus votes, the winning model, and the synthesized final output.
+    """
+
+    individual_outputs: dict[str, str] = Field(
+        default_factory=dict,
+        description="Model key → independent improvement output",
+    )
+    scores: dict[str, dict[str, dict[str, int]]] = Field(
+        default_factory=dict,
+        description=(
+            "Cross-review scores: reviewer → reviewed → "
+            "{architecture, implementation, quality} (1-10 each)"
+        ),
+    )
+    votes: dict[str, str] = Field(
+        default_factory=dict,
+        description="Consensus votes: voter model key → voted-for model key",
+    )
+    winner: str = Field(
+        default="",
+        description="Model key of the winning improvement approach",
+    )
+    synthesized_output: str = Field(
+        default="",
+        description="Final output after synthesis of winning + best elements",
+    )
+
+
 class SuggestionDecision(BaseModel):
     """Result of a primary role-holder evaluating a cross-domain suggestion.
 

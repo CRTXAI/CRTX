@@ -11,7 +11,12 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 from triad.schemas.arbiter import ArbiterReview
-from triad.schemas.consensus import DebateResult, ParallelResult
+from triad.schemas.consensus import (
+    DebateResult,
+    ImproveResult,
+    ParallelResult,
+    ReviewResult,
+)
 from triad.schemas.messages import AgentMessage, PipelineStage, Suggestion
 from triad.schemas.routing import RoutingDecision, RoutingStrategy
 
@@ -26,6 +31,8 @@ class PipelineMode(StrEnum):
     SEQUENTIAL = "sequential"
     PARALLEL = "parallel"
     DEBATE = "debate"
+    REVIEW = "review"
+    IMPROVE = "improve"
 
 
 class ArbiterMode(StrEnum):
@@ -231,6 +238,12 @@ class PipelineResult(BaseModel):
     )
     debate_result: DebateResult | None = Field(
         default=None, description="Debate mode result (when mode=debate)"
+    )
+    review_result: ReviewResult | None = Field(
+        default=None, description="Review mode result (when mode=review)"
+    )
+    improve_result: ImproveResult | None = Field(
+        default=None, description="Improve mode result (when mode=improve)"
     )
     routing_decisions: list[RoutingDecision] = Field(
         default_factory=list,

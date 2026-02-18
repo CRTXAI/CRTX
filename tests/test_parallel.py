@@ -581,6 +581,76 @@ class TestParallelSynthesisRetry:
         assert len(result.arbiter_reviews) == 1
         assert result.success is True
 
+    async def test_synthesis_retry_uses_retry_template(self):
+        """Retry should call parallel_synthesis_retry, not parallel_synthesize."""
+        registry = _make_three_model_registry()
+        responses = [_make_agent_message(f"out-{i}") for i in range(11)]
+        mock_cls, _ = _mock_provider(responses)
+
+        reject_review = _make_approve_review(
+            verdict=Verdict.REJECT, reasoning="Issues found",
+        )
+        approve_review = _make_approve_review(verdict=Verdict.APPROVE)
+        mock_arbiter = AsyncMock(side_effect=[reject_review, approve_review])
+
+        with (
+            patch(_PROVIDER, mock_cls),
+            patch(_ARBITER_REVIEW, mock_arbiter),
+            patch("triad.orchestrator.render_prompt") as mock_render,
+        ):
+            mock_render.return_value = "system prompt"
+            orch = ParallelOrchestrator(
+                task=_make_task(),
+                config=PipelineConfig(
+                    pipeline_mode="parallel", arbiter_mode="bookend",
+                ),
+                registry=registry,
+            )
+            await orch.run()
+
+        # Collect all template names used in render_prompt calls
+        template_names = [call.args[0] for call in mock_render.call_args_list]
+        assert "parallel_synthesis_retry" in template_names
+        # parallel_synthesize should be called for the initial synthesis
+        assert "parallel_synthesize" in template_names
+
+    async def test_synthesis_retry_passes_previous_synthesis(self):
+        """Retry template vars should include previous_synthesis."""
+        registry = _make_three_model_registry()
+        responses = [_make_agent_message(f"out-{i}") for i in range(11)]
+        mock_cls, _ = _mock_provider(responses)
+
+        reject_review = _make_approve_review(
+            verdict=Verdict.REJECT, reasoning="Issues found",
+        )
+        approve_review = _make_approve_review(verdict=Verdict.APPROVE)
+        mock_arbiter = AsyncMock(side_effect=[reject_review, approve_review])
+
+        with (
+            patch(_PROVIDER, mock_cls),
+            patch(_ARBITER_REVIEW, mock_arbiter),
+            patch("triad.orchestrator.render_prompt") as mock_render,
+        ):
+            mock_render.return_value = "system prompt"
+            orch = ParallelOrchestrator(
+                task=_make_task(),
+                config=PipelineConfig(
+                    pipeline_mode="parallel", arbiter_mode="bookend",
+                ),
+                registry=registry,
+            )
+            await orch.run()
+
+        # Find the retry call and check its kwargs
+        retry_calls = [
+            call for call in mock_render.call_args_list
+            if call.args[0] == "parallel_synthesis_retry"
+        ]
+        assert len(retry_calls) >= 1
+        retry_kwargs = retry_calls[0].kwargs
+        assert "previous_synthesis" in retry_kwargs
+        assert "arbiter_feedback" in retry_kwargs
+
 
 # ── Cost Tracking ─────────────────────────────────────────────────
 
@@ -661,6 +731,42 @@ class TestModeDispatch:
                 _make_task(),
                 PipelineConfig(
                     pipeline_mode="debate", arbiter_mode="off",
+                    persist_sessions=False,
+                ),
+                _make_three_model_registry(),
+            )
+            mock_orch_cls.assert_called_once()
+
+    async def test_review_mode_uses_review_orchestrator(self):
+        with patch(
+            "triad.orchestrator.ReviewOrchestrator"
+        ) as mock_orch_cls:
+            mock_inst = MagicMock()
+            mock_inst.run = AsyncMock(return_value=MagicMock())
+            mock_orch_cls.return_value = mock_inst
+
+            await run_pipeline(
+                _make_task(),
+                PipelineConfig(
+                    pipeline_mode="review", arbiter_mode="off",
+                    persist_sessions=False,
+                ),
+                _make_three_model_registry(),
+            )
+            mock_orch_cls.assert_called_once()
+
+    async def test_improve_mode_uses_improve_orchestrator(self):
+        with patch(
+            "triad.orchestrator.ImproveOrchestrator"
+        ) as mock_orch_cls:
+            mock_inst = MagicMock()
+            mock_inst.run = AsyncMock(return_value=MagicMock())
+            mock_orch_cls.return_value = mock_inst
+
+            await run_pipeline(
+                _make_task(),
+                PipelineConfig(
+                    pipeline_mode="improve", arbiter_mode="off",
                     persist_sessions=False,
                 ),
                 _make_three_model_registry(),

@@ -438,6 +438,52 @@ class TestArbiterEngine:
 
         assert review.arbiter_model == "high-v1"
 
+    async def test_selects_by_verifier_fitness_not_average(self):
+        """Arbiter should pick the highest verifier fitness, not avg."""
+        mock_cls, _ = _mock_arbiter_provider(
+            "VERDICT: APPROVE\nCONFIDENCE: 0.9"
+        )
+        # high_avg has high average but LOW verifier
+        high_avg = _make_model_config(
+            model="high-avg-v1",
+            display_name="High Avg",
+            fitness=RoleFitness(
+                architect=0.95, implementer=0.95,
+                refactorer=0.95, verifier=0.70,
+            ),
+        )
+        # high_verifier has low average but HIGH verifier
+        high_verifier = _make_model_config(
+            model="high-ver-v1",
+            display_name="High Verifier",
+            fitness=RoleFitness(
+                architect=0.50, implementer=0.50,
+                refactorer=0.50, verifier=0.98,
+            ),
+        )
+        stage_model = _make_model_config(
+            model="stage-v1",
+            display_name="Stage",
+        )
+        registry = {
+            "high-avg": high_avg,
+            "high-ver": high_verifier,
+            "stage": stage_model,
+        }
+        config = PipelineConfig()
+        engine = ArbiterEngine(config, registry)
+
+        with patch(_ARBITER_PROVIDER, mock_cls):
+            review = await engine.review(
+                stage=PipelineStage.ARCHITECT,
+                stage_model="stage-v1",
+                stage_output="output",
+                task=_make_task(),
+            )
+
+        # Should pick the high-verifier model, not the high-average one
+        assert review.arbiter_model == "high-ver-v1"
+
 
 # ── Feedback Injection ─────────────────────────────────────────────
 

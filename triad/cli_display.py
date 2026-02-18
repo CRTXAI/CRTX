@@ -368,6 +368,25 @@ _PARALLEL_EVENT_MAP = {
     "parallel_synthesis_retry": "synthesis",
 }
 
+# Debate-mode phase display
+_DEBATE_PHASE_ORDER = ["proposals", "rebuttals", "final_args", "judgment", "arbiter"]
+
+_DEBATE_PHASE_LABELS = {
+    "proposals": "Position Papers",
+    "rebuttals": "Rebuttals",
+    "final_args": "Final Arguments",
+    "judgment": "Judgment",
+    "arbiter": "Arbiter",
+}
+
+# Maps DebateOrchestrator event stage names → display phase keys
+_DEBATE_EVENT_MAP = {
+    "debate_proposals": "proposals",
+    "debate_rebuttals": "rebuttals",
+    "debate_final_arguments": "final_args",
+    "debate_judgment": "judgment",
+}
+
 # Status symbols
 _STATUS_SYMBOLS = {
     "pending": "○",
@@ -400,8 +419,14 @@ class PipelineDisplay:
         self._lock = threading.Lock()
 
         # Mode-aware phase setup
-        self._is_parallel = (mode == "parallel")
-        self._phase_order = _PARALLEL_PHASE_ORDER if self._is_parallel else _STAGE_ORDER
+        self._is_parallel = (mode in ("parallel", "review", "improve"))
+        self._is_debate = (mode == "debate")
+        if self._is_parallel:
+            self._phase_order = _PARALLEL_PHASE_ORDER
+        elif self._is_debate:
+            self._phase_order = _DEBATE_PHASE_ORDER
+        else:
+            self._phase_order = _STAGE_ORDER
 
         # Stage/phase state
         self._stages: dict[str, dict] = {}
@@ -443,8 +468,13 @@ class PipelineDisplay:
                 if etype == "stage_started":
                     stage = event.data.get("stage", "")
                     model = event.data.get("model", "")
-                    # Resolve parallel event names to display phase keys
-                    phase = _PARALLEL_EVENT_MAP.get(stage, stage) if self._is_parallel else stage
+                    # Resolve event names to display phase keys
+                    if self._is_parallel:
+                        phase = _PARALLEL_EVENT_MAP.get(stage, stage)
+                    elif self._is_debate:
+                        phase = _DEBATE_EVENT_MAP.get(stage, stage)
+                    else:
+                        phase = stage
                     if phase in self._stages:
                         self._stages[phase]["status"] = "running"
                         self._stages[phase]["model"] = model
@@ -460,8 +490,13 @@ class PipelineDisplay:
                     cost = event.data.get("cost", 0)
                     confidence = event.data.get("confidence", 0)
                     model = event.data.get("model", "")
-                    # Resolve parallel event names to display phase keys
-                    phase = _PARALLEL_EVENT_MAP.get(stage, stage) if self._is_parallel else stage
+                    # Resolve event names to display phase keys
+                    if self._is_parallel:
+                        phase = _PARALLEL_EVENT_MAP.get(stage, stage)
+                    elif self._is_debate:
+                        phase = _DEBATE_EVENT_MAP.get(stage, stage)
+                    else:
+                        phase = stage
                     if phase in self._stages:
                         self._stages[phase]["status"] = "done"
                         self._stages[phase]["duration"] = duration
@@ -493,7 +528,7 @@ class PipelineDisplay:
                     stage = event.data.get("stage", "")
                     arbiter_model = event.data.get("arbiter_model", "")
                     self._arbiter_active = stage
-                    if self._is_parallel and "arbiter" in self._stages:
+                    if (self._is_parallel or self._is_debate) and "arbiter" in self._stages:
                         self._stages["arbiter"]["status"] = "running"
                         self._stages["arbiter"]["model"] = arbiter_model
                         self._stages["arbiter"]["start_time"] = time.monotonic()
@@ -510,7 +545,7 @@ class PipelineDisplay:
                     reasoning = event.data.get("reasoning_preview", "")
                     arbiter_model = event.data.get("arbiter_model", "")
                     self._arbiter_active = None
-                    if self._is_parallel and "arbiter" in self._stages:
+                    if (self._is_parallel or self._is_debate) and "arbiter" in self._stages:
                         self._stages["arbiter"]["status"] = "done"
                         self._stages["arbiter"]["confidence"] = confidence
                         if self._stages["arbiter"]["start_time"] is not None:
@@ -635,7 +670,7 @@ class PipelineDisplay:
             padding=(0, 2),
             expand=True,
         )
-        col_header = "Phase" if self._is_parallel else "Stage"
+        col_header = "Phase" if (self._is_parallel or self._is_debate) else "Stage"
         stage_table.add_column(col_header, style="bold")
         stage_table.add_column("Status")
         stage_table.add_column("Model", style=BRAND["dim"])
@@ -673,9 +708,11 @@ class PipelineDisplay:
                 # Cost
                 cost_str = f"${info['cost']:.4f}" if info["cost"] is not None else "-"
 
-                # Display name: use parallel labels or title-case
+                # Display name: use mode-specific labels or title-case
                 if self._is_parallel:
                     display_name = _PARALLEL_PHASE_LABELS.get(stage, stage.title())
+                elif self._is_debate:
+                    display_name = _DEBATE_PHASE_LABELS.get(stage, stage.title())
                 else:
                     display_name = stage.title()
 
@@ -687,8 +724,8 @@ class PipelineDisplay:
                     cost_str,
                 )
 
-            # Arbiter row if active (sequential mode only — parallel has its own row)
-            if self._arbiter_active and not self._is_parallel:
+            # Arbiter row if active (sequential mode only — parallel/debate have their own row)
+            if self._arbiter_active and not self._is_parallel and not self._is_debate:
                 stage_table.add_row(
                     "Arbiter",
                     Text(f"◉ Reviewing {self._arbiter_active}", style=BRAND["gold"]),

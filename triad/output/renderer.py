@@ -62,7 +62,15 @@ def render_summary(result: PipelineResult) -> str:
     lines.append("")
 
     # Status
-    status = "HALTED" if result.halted else ("SUCCESS" if result.success else "FAILED")
+    has_rejects = any(r.verdict.value == "reject" for r in result.arbiter_reviews)
+    if result.halted:
+        status = "HALTED"
+    elif result.success and has_rejects:
+        status = "COMPLETED WITH REJECTIONS"
+    elif result.success:
+        status = "SUCCESS"
+    else:
+        status = "FAILED"
     lines.append(f"## Result: {status}")
     lines.append("")
     if result.halted and result.halt_reason:
@@ -177,6 +185,47 @@ def render_summary(result: PipelineResult) -> str:
             if len(dr.judgment) > 500:
                 preview += "..."
             lines.append("### Judgment")
+            lines.append("")
+            lines.append(f"> {preview}")
+            lines.append("")
+
+    # Review Mode Results
+    if result.review_result:
+        rr = result.review_result
+        lines.append("## Code Review Results")
+        lines.append("")
+        lines.append(f"- **Reviewers:** {len(rr.individual_analyses)}")
+        lines.append("")
+
+        if rr.synthesized_review:
+            lines.append("### Synthesized Review")
+            lines.append("")
+            lines.append(rr.synthesized_review)
+            lines.append("")
+
+    # Improve Mode Results
+    if result.improve_result:
+        ir = result.improve_result
+        lines.append("## Code Improvement Results")
+        lines.append("")
+        lines.append(f"- **Winner:** {ir.winner}")
+        lines.append(f"- **Models:** {len(ir.individual_outputs)}")
+        lines.append("")
+
+        if ir.votes:
+            lines.append("### Votes")
+            lines.append("")
+            lines.append("| Voter | Voted For |")
+            lines.append("|-------|-----------|")
+            for voter, voted_for in ir.votes.items():
+                lines.append(f"| {voter} | {voted_for} |")
+            lines.append("")
+
+        if ir.synthesized_output:
+            preview = ir.synthesized_output[:500]
+            if len(ir.synthesized_output) > 500:
+                preview += "..."
+            lines.append("### Synthesized Output")
             lines.append("")
             lines.append(f"> {preview}")
             lines.append("")

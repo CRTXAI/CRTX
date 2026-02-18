@@ -124,6 +124,10 @@ def _extract_code_files(
         final_content = result.parallel_result.synthesized_output
     if not final_content and result.debate_result:
         final_content = result.debate_result.judgment
+    if not final_content and result.review_result:
+        final_content = result.review_result.synthesized_review
+    if not final_content and result.improve_result:
+        final_content = result.improve_result.synthesized_output
 
     if not final_content:
         return

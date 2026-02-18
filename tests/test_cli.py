@@ -949,3 +949,25 @@ class TestCliDebateDisplay:
 
         assert result.exit_code == 0
         assert "HALTED" in result.output
+
+    def test_debate_run_shows_stage_and_model_counts(self):
+        """Debate mode shows non-zero stage and model counts."""
+        mock_result = self._make_debate_result()
+
+        with (
+            patch.dict(os.environ, _FAKE_PROVIDER_KEYS),
+            patch("triad.cli.asyncio.run", return_value=mock_result),
+            patch("triad.output.writer.write_pipeline_output"),
+        ):
+            result = runner.invoke(app, [
+                "run", "Build API",
+                "--mode", "debate",
+                "--arbiter", "off",
+                "--no-persist",
+            ])
+
+        assert result.exit_code == 0
+        # 4 phases (proposals + rebuttals + final_args + judgment)
+        assert "4" in result.output
+        # 3 debaters + judge (model-c is both debater and judge, so 3 providers)
+        assert "3 providers" in result.output
