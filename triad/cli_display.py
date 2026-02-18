@@ -1,4 +1,4 @@
-"""Interactive CLI display components for the Triad Orchestrator.
+"""Interactive CLI display components for CRTX.
 
 Provides branded ASCII art, interactive configuration screen,
 real-time pipeline status display, and post-completion summary.
@@ -36,19 +36,19 @@ VERSION = "0.1.0"
 
 # ── ASCII Art Logos ───────────────────────────────────────────────
 
-# Full logo — triad triangle + block letters
+# Full logo — triangle + CRTX block letters
 FULL_LOGO = r"""
-        ◆                ▀▀▀█▀▀▀ █▀▀▀▄  ▀█▀  ▄▀▀▀▄ █▀▀▀▄
-       ╱ ╲                  █    █   █   █   █   █ █   █
-      ╱   ╲                 █    █▀▀█▀   █   █▀▀▀█ █   █
-     ╱  ◈  ╲                █    █  ▀▄  ▄█▄  █   █ █▄▄▄▀
+        ◆                ▄▀▀▀▄ █▀▀▀▄ ▀▀▀█▀▀▀ █   █
+       ╱ ╲               █     █   █    █    ▀▄ ▄▀
+      ╱   ╲              █     █▀▀█▀    █      █
+     ╱  ◈  ╲             ▀▄▄▄▀ █  ▀▄   █    ▄▀ ▀▄
     ╱       ╲
    ◆─────────◆
 """
 
 COMPACT_LOGO_TEMPLATE = """\
  ◆
-╱◈╲    Triad Orchestrator v{version}
+╱◈╲    CRTX v{version}
 ◆──◆   {mode} · {route} · {arbiter}"""
 
 
@@ -59,7 +59,7 @@ def render_full_logo(console: Console) -> None:
     for line in lines:
         text = Text()
         # Left side contains the triangle geometry
-        # Right side contains the TRIAD block letters
+        # Right side contains the CRTX block letters
         # Split at column 22 (where block letters start)
         left = line[:22] if len(line) > 22 else line
         right = line[22:] if len(line) > 22 else ""
@@ -81,9 +81,12 @@ def render_full_logo(console: Console) -> None:
 
         console.print(text)
 
-    # Subtitle
+    # Pronunciation + subtitle
+    pronun = Text()
+    pronun.append("    /kôr'teks/", style=BRAND["dim"])
+    console.print(pronun)
     subtitle = Text()
-    subtitle.append("    Multi-model AI orchestration with adversarial review", style=BRAND["dim"])
+    subtitle.append("    Every session smarter than the last.", style=BRAND["dim"])
     console.print(subtitle)
     console.print()
 
@@ -346,6 +349,25 @@ class ConfigScreen:
 # Stage display order
 _STAGE_ORDER = ["architect", "implement", "refactor", "verify"]
 
+# Parallel-mode phase display
+_PARALLEL_PHASE_ORDER = ["fan_out", "cross_review", "voting", "synthesis", "arbiter"]
+
+_PARALLEL_PHASE_LABELS = {
+    "fan_out": "Fan-Out",
+    "cross_review": "Cross-Review",
+    "voting": "Voting",
+    "synthesis": "Synthesis",
+    "arbiter": "Arbiter",
+}
+
+# Maps ParallelOrchestrator event stage names → display phase keys
+_PARALLEL_EVENT_MAP = {
+    "parallel_fan_out": "fan_out",
+    "parallel_cross_review": "cross_review",
+    "parallel_synthesis": "synthesis",
+    "parallel_synthesis_retry": "synthesis",
+}
+
 # Status symbols
 _STATUS_SYMBOLS = {
     "pending": "○",
@@ -377,9 +399,13 @@ class PipelineDisplay:
         self._live: Live | None = None
         self._lock = threading.Lock()
 
-        # Stage state
+        # Mode-aware phase setup
+        self._is_parallel = (mode == "parallel")
+        self._phase_order = _PARALLEL_PHASE_ORDER if self._is_parallel else _STAGE_ORDER
+
+        # Stage/phase state
         self._stages: dict[str, dict] = {}
-        for stage in _STAGE_ORDER:
+        for stage in self._phase_order:
             self._stages[stage] = {
                 "status": "pending",
                 "model": "",
@@ -417,10 +443,12 @@ class PipelineDisplay:
                 if etype == "stage_started":
                     stage = event.data.get("stage", "")
                     model = event.data.get("model", "")
-                    if stage in self._stages:
-                        self._stages[stage]["status"] = "running"
-                        self._stages[stage]["model"] = model
-                        self._stages[stage]["start_time"] = time.monotonic()
+                    # Resolve parallel event names to display phase keys
+                    phase = _PARALLEL_EVENT_MAP.get(stage, stage) if self._is_parallel else stage
+                    if phase in self._stages:
+                        self._stages[phase]["status"] = "running"
+                        self._stages[phase]["model"] = model
+                        self._stages[phase]["start_time"] = time.monotonic()
                     self._add_log(
                         BRAND["green"],
                         f"▸ {stage.title()} started" + (f" ({model})" if model else ""),
@@ -432,25 +460,43 @@ class PipelineDisplay:
                     cost = event.data.get("cost", 0)
                     confidence = event.data.get("confidence", 0)
                     model = event.data.get("model", "")
-                    if stage in self._stages:
-                        self._stages[stage]["status"] = "done"
-                        self._stages[stage]["duration"] = duration
+                    # Resolve parallel event names to display phase keys
+                    phase = _PARALLEL_EVENT_MAP.get(stage, stage) if self._is_parallel else stage
+                    if phase in self._stages:
+                        self._stages[phase]["status"] = "done"
+                        self._stages[phase]["duration"] = duration
                         # Accumulate cost across retries
-                        prev = self._stages[stage]["cost"] or 0
-                        self._stages[stage]["cost"] = prev + cost
-                        self._stages[stage]["confidence"] = confidence
+                        prev = self._stages[phase]["cost"] or 0
+                        self._stages[phase]["cost"] = prev + cost
+                        self._stages[phase]["confidence"] = confidence
                         if model:
-                            self._stages[stage]["model"] = model
-                    total_cost = (self._stages.get(stage, {}).get("cost") or 0)
+                            self._stages[phase]["model"] = model
+                    total_cost = (self._stages.get(phase, {}).get("cost") or 0)
                     self._add_log(
                         BRAND["mint"],
                         f"● {stage.title()} done ({duration:.1f}s, ${total_cost:.4f})",
                     )
 
+                elif etype == "consensus_vote":
+                    if self._is_parallel and "voting" in self._stages:
+                        winner = event.data.get("winner", "")
+                        method = event.data.get("method", "")
+                        self._stages["voting"]["status"] = "done"
+                        self._stages["voting"]["duration"] = 0
+                        label = winner or method or "resolved"
+                        self._add_log(
+                            BRAND["mint"],
+                            f"● Voting done ({label})",
+                        )
+
                 elif etype == "arbiter_started":
                     stage = event.data.get("stage", "")
                     arbiter_model = event.data.get("arbiter_model", "")
                     self._arbiter_active = stage
+                    if self._is_parallel and "arbiter" in self._stages:
+                        self._stages["arbiter"]["status"] = "running"
+                        self._stages["arbiter"]["model"] = arbiter_model
+                        self._stages["arbiter"]["start_time"] = time.monotonic()
                     model_note = f" ({arbiter_model})" if arbiter_model else ""
                     self._add_log(
                         BRAND["gold"],
@@ -464,6 +510,13 @@ class PipelineDisplay:
                     reasoning = event.data.get("reasoning_preview", "")
                     arbiter_model = event.data.get("arbiter_model", "")
                     self._arbiter_active = None
+                    if self._is_parallel and "arbiter" in self._stages:
+                        self._stages["arbiter"]["status"] = "done"
+                        self._stages["arbiter"]["confidence"] = confidence
+                        if self._stages["arbiter"]["start_time"] is not None:
+                            self._stages["arbiter"]["duration"] = (
+                                time.monotonic() - self._stages["arbiter"]["start_time"]
+                            )
                     self._arbiter_verdicts.append({
                         "stage": stage,
                         "verdict": verdict,
@@ -582,14 +635,15 @@ class PipelineDisplay:
             padding=(0, 2),
             expand=True,
         )
-        stage_table.add_column("Stage", style="bold")
+        col_header = "Phase" if self._is_parallel else "Stage"
+        stage_table.add_column(col_header, style="bold")
         stage_table.add_column("Status")
         stage_table.add_column("Model", style=BRAND["dim"])
         stage_table.add_column("Time", justify="right")
         stage_table.add_column("Cost", justify="right")
 
         with self._lock:
-            for stage in _STAGE_ORDER:
+            for stage in self._phase_order:
                 info = self._stages[stage]
                 status = info["status"]
 
@@ -619,16 +673,22 @@ class PipelineDisplay:
                 # Cost
                 cost_str = f"${info['cost']:.4f}" if info["cost"] is not None else "-"
 
+                # Display name: use parallel labels or title-case
+                if self._is_parallel:
+                    display_name = _PARALLEL_PHASE_LABELS.get(stage, stage.title())
+                else:
+                    display_name = stage.title()
+
                 stage_table.add_row(
-                    stage.title(),
+                    display_name,
                     status_text,
                     model,
                     time_str,
                     cost_str,
                 )
 
-            # Arbiter row if active
-            if self._arbiter_active:
+            # Arbiter row if active (sequential mode only — parallel has its own row)
+            if self._arbiter_active and not self._is_parallel:
                 stage_table.add_row(
                     "Arbiter",
                     Text(f"◉ Reviewing {self._arbiter_active}", style=BRAND["gold"]),

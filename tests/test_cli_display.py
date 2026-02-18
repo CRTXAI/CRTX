@@ -19,6 +19,9 @@ from triad.cli_display import (
     CompletionSummary,
     ConfigScreen,
     PipelineDisplay,
+    _PARALLEL_PHASE_LABELS,
+    _PARALLEL_PHASE_ORDER,
+    _STAGE_ORDER,
     _verdict_color,
     render_compact_logo,
     render_full_logo,
@@ -373,6 +376,143 @@ class TestPipelineDisplay:
         assert result is not None
 
 
+# ── Parallel PipelineDisplay ─────────────────────────────────────
+
+
+class TestParallelPipelineDisplay:
+    """Tests for PipelineDisplay in parallel mode."""
+
+    def _make_display(self):
+        console = Console(file=MagicMock(), force_terminal=True, width=120)
+        return PipelineDisplay(console, "parallel", "hybrid", "bookend")
+
+    def test_parallel_initializes_phase_rows(self):
+        """Parallel mode initializes _stages with all parallel phase keys."""
+        display = self._make_display()
+        assert set(display._stages.keys()) == set(_PARALLEL_PHASE_ORDER)
+        for phase in _PARALLEL_PHASE_ORDER:
+            assert display._stages[phase]["status"] == "pending"
+
+    def test_parallel_fan_out_event_updates_row(self):
+        """stage_started with parallel_fan_out sets fan_out to running."""
+        display = self._make_display()
+        listener = display.create_listener()
+
+        listener(PipelineEvent(
+            type=EventType.STAGE_STARTED,
+            data={"stage": "parallel_fan_out", "model": "gpt-4"},
+        ))
+
+        assert display._stages["fan_out"]["status"] == "running"
+        assert display._stages["fan_out"]["model"] == "gpt-4"
+
+    def test_parallel_fan_out_completed(self):
+        """stage_completed with parallel_fan_out sets fan_out to done."""
+        display = self._make_display()
+        listener = display.create_listener()
+
+        listener(PipelineEvent(
+            type=EventType.STAGE_COMPLETED,
+            data={"stage": "parallel_fan_out", "duration": 5.0, "cost": 0.02},
+        ))
+
+        assert display._stages["fan_out"]["status"] == "done"
+        assert display._stages["fan_out"]["duration"] == 5.0
+        assert display._stages["fan_out"]["cost"] == 0.02
+
+    def test_parallel_cross_review_events(self):
+        """Cross-review start/complete updates the cross_review row."""
+        display = self._make_display()
+        listener = display.create_listener()
+
+        listener(PipelineEvent(
+            type=EventType.STAGE_STARTED,
+            data={"stage": "parallel_cross_review", "model": "claude-sonnet"},
+        ))
+        assert display._stages["cross_review"]["status"] == "running"
+
+        listener(PipelineEvent(
+            type=EventType.STAGE_COMPLETED,
+            data={"stage": "parallel_cross_review", "duration": 8.0, "cost": 0.03},
+        ))
+        assert display._stages["cross_review"]["status"] == "done"
+        assert display._stages["cross_review"]["duration"] == 8.0
+
+    def test_parallel_consensus_vote_updates_voting(self):
+        """consensus_vote event sets voting row to done with winner info."""
+        display = self._make_display()
+        listener = display.create_listener()
+
+        listener(PipelineEvent(
+            type=EventType.CONSENSUS_VOTE,
+            data={"winner": "agent_1", "method": "majority"},
+        ))
+
+        assert display._stages["voting"]["status"] == "done"
+
+    def test_parallel_synthesis_events(self):
+        """Synthesis start/complete updates the synthesis row."""
+        display = self._make_display()
+        listener = display.create_listener()
+
+        listener(PipelineEvent(
+            type=EventType.STAGE_STARTED,
+            data={"stage": "parallel_synthesis", "model": "claude-opus"},
+        ))
+        assert display._stages["synthesis"]["status"] == "running"
+
+        listener(PipelineEvent(
+            type=EventType.STAGE_COMPLETED,
+            data={"stage": "parallel_synthesis", "duration": 15.0, "cost": 0.08},
+        ))
+        assert display._stages["synthesis"]["status"] == "done"
+
+    def test_parallel_arbiter_updates_row(self):
+        """arbiter_started/verdict updates the arbiter row in parallel mode."""
+        display = self._make_display()
+        listener = display.create_listener()
+
+        listener(PipelineEvent(
+            type=EventType.ARBITER_STARTED,
+            data={"stage": "verify", "arbiter_model": "claude-opus"},
+        ))
+        assert display._stages["arbiter"]["status"] == "running"
+        assert display._stages["arbiter"]["model"] == "claude-opus"
+
+        listener(PipelineEvent(
+            type=EventType.ARBITER_VERDICT,
+            data={"stage": "verify", "verdict": "approve", "confidence": 0.95},
+        ))
+        assert display._stages["arbiter"]["status"] == "done"
+        assert display._stages["arbiter"]["confidence"] == 0.95
+
+    def test_parallel_build_display_renders(self):
+        """_build_display() produces output without errors in parallel mode."""
+        display = self._make_display()
+        result = display._build_display()
+        assert result is not None
+
+    def test_parallel_phase_labels_in_output(self):
+        """Rendered table uses parallel phase labels like Fan-Out, Cross-Review."""
+        display = self._make_display()
+        console = Console(file=MagicMock(), force_terminal=True, width=120)
+        # Render to string
+        with console.capture() as capture:
+            console.print(display._build_status_panel())
+        output = capture.get()
+
+        for label in _PARALLEL_PHASE_LABELS.values():
+            assert label in output, f"Expected '{label}' in rendered output"
+        assert "Phase" in output
+
+    def test_sequential_mode_unchanged(self):
+        """Sequential mode still uses the 4 original stages."""
+        console = Console(file=MagicMock(), force_terminal=True, width=120)
+        display = PipelineDisplay(console, "sequential", "hybrid", "bookend")
+        assert set(display._stages.keys()) == set(_STAGE_ORDER)
+        assert display._is_parallel is False
+
+
 # ── CompletionSummary ────────────────────────────────────────────
 
 
@@ -395,7 +535,7 @@ class TestCompletionSummary:
         """_build_panel renders success state."""
         console = Console(file=MagicMock(), force_terminal=True, width=120)
         result = self._make_result()
-        summary = CompletionSummary(console, result, "triad-output")
+        summary = CompletionSummary(console, result, "crtx-output")
         panel = summary._build_panel()
         assert panel is not None
 
@@ -403,7 +543,7 @@ class TestCompletionSummary:
         """_build_panel renders halted state."""
         console = Console(file=MagicMock(), force_terminal=True, width=120)
         result = self._make_result(halted=True, success=False, halt_reason="Bug found")
-        summary = CompletionSummary(console, result, "triad-output")
+        summary = CompletionSummary(console, result, "crtx-output")
         panel = summary._build_panel()
         assert panel is not None
 
@@ -411,7 +551,7 @@ class TestCompletionSummary:
         """_build_panel renders failure state."""
         console = Console(file=MagicMock(), force_terminal=True, width=120)
         result = self._make_result(success=False)
-        summary = CompletionSummary(console, result, "triad-output")
+        summary = CompletionSummary(console, result, "crtx-output")
         panel = summary._build_panel()
         assert panel is not None
 
@@ -420,7 +560,7 @@ class TestCompletionSummary:
         """show() returns None when user presses q."""
         console = Console(file=MagicMock(), force_terminal=True, width=120)
         result = self._make_result()
-        summary = CompletionSummary(console, result, "triad-output")
+        summary = CompletionSummary(console, result, "crtx-output")
         action = summary.show()
         assert action is None
 
@@ -429,7 +569,7 @@ class TestCompletionSummary:
         """show() returns None when user presses Enter."""
         console = Console(file=MagicMock(), force_terminal=True, width=120)
         result = self._make_result()
-        summary = CompletionSummary(console, result, "triad-output")
+        summary = CompletionSummary(console, result, "crtx-output")
         action = summary.show()
         assert action is None
 
@@ -438,7 +578,7 @@ class TestCompletionSummary:
         """show() returns 'rerun' when user presses r."""
         console = Console(file=MagicMock(), force_terminal=True, width=120)
         result = self._make_result()
-        summary = CompletionSummary(console, result, "triad-output")
+        summary = CompletionSummary(console, result, "crtx-output")
         action = summary.show()
         assert action == "rerun"
 
@@ -447,7 +587,7 @@ class TestCompletionSummary:
         """show() returns None on KeyboardInterrupt."""
         console = Console(file=MagicMock(), force_terminal=True, width=120)
         result = self._make_result()
-        summary = CompletionSummary(console, result, "triad-output")
+        summary = CompletionSummary(console, result, "crtx-output")
         action = summary.show()
         assert action is None
 
@@ -458,6 +598,6 @@ class TestCompletionSummary:
         review.verdict.value = "approve"
         review.stage_reviewed.value = "architect"
         result = self._make_result(arbiter_reviews=[review])
-        summary = CompletionSummary(console, result, "triad-output")
+        summary = CompletionSummary(console, result, "crtx-output")
         panel = summary._build_panel()
         assert panel is not None
