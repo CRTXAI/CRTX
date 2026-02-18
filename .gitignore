@@ -9,6 +9,7 @@ build/
 # Environment
 .env
 .env.*
+*.env
 
 # PRIVATE — domain-specific config NEVER committed
 triad/config/domain/
@@ -26,3 +27,8 @@ debug-bundle.txt
 # Pipeline output
 crtx-output/
 triad-output/
+
+# Pro / SaaS — not part of open-source release
+api/
+supabase/
+package-lock.json

@@ -1,6 +1,0 @@
-fastapi>=0.115,<1
-uvicorn[standard]>=0.34,<1
-supabase>=2,<3
-pydantic>=2,<3
-bcrypt>=4,<5
-stripe>=12,<13

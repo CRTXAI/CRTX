@@ -61,7 +61,7 @@ Triad exists because the judgment gap requires multiple perspectives, structured
 
 **Value proposition:** You're not building alone. Three AI models are your engineering team — one plans, one builds, one reviews — and an independent referee makes sure nothing falls through the cracks. You focus on the idea. The Triad handles the engineering judgment.
 
-**This is the person who builds the next ALIA. Give them the tools to succeed.**
+**This is the person who builds the next great product. Give them the tools to succeed.**
 
 ### Audience 3: Non-Technical Creators (v0.4+)
 
@@ -151,7 +151,7 @@ No. And here's why:
 
 ## Why Now
 
-Six months ago, building ALIA required one person and one AI model. It worked, but every bug, every architectural misstep, every missed edge case was a tax on velocity. The Arbiter pattern — routing output through a separate review instance — emerged organically because single-model development has a quality ceiling.
+Six months ago, building a production app required one person and one AI model. It worked, but every bug, every architectural misstep, every missed edge case was a tax on velocity. The Arbiter pattern — routing output through a separate review instance — emerged organically because single-model development has a quality ceiling.
 
 Triad formalizes that pattern and extends it. Three models. Structured collaboration. Adversarial review. Independent verification. The result is software development where the quality floor is higher than most single-model ceilings.
 
