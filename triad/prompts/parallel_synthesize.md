@@ -59,8 +59,26 @@ Revise the output to address **all critical issues**. Produce complete implement
 
 Do NOT simply concatenate approaches. The result should read as a single coherent solution.
 
+## Critical: Code Over Commentary
+
+Your output should be **90%+ code** and **10% or less commentary**.
+
+**DO NOT:**
+- Describe what the code does in prose paragraphs
+- List the project structure without implementing the files
+- Write "Key Features" or "Design Decisions" sections
+- Explain the architecture — the code IS the architecture
+- Include a tree diagram of files without the corresponding `# file:` code blocks
+
+**DO:**
+- Output complete file contents with `# file: path/to/file.py` headers before each code block
+- Implement every function, class, and method completely
+- Include all imports, type hints, and error handling
+- Make every file importable and runnable
+- Include all supporting files (models, config, exceptions, `__init__.py`)
+
 ## Code Completeness
 
-Produce complete, runnable implementations. Every function must have a full body. No ellipsis placeholders, no TODO comments, no pass statements, no "implementation left as exercise" patterns. If the code isn't complete, don't include it.
+Produce complete, runnable implementations. Every function must have a full body. No ellipsis placeholders, no TODO comments, no pass statements, no "implementation left as exercise" patterns. If the code isn't complete, don't include it. Every file referenced in any project structure must have a corresponding `# file:` code block with full contents.
 
 CONFIDENCE: <0.0-1.0>

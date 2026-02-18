@@ -484,6 +484,93 @@ class TestArbiterEngine:
         # Should pick the high-verifier model, not the high-average one
         assert review.arbiter_model == "high-ver-v1"
 
+    async def test_exclude_models_excludes_all_participants(self):
+        """exclude_models should prevent ALL listed models from serving as arbiter."""
+        mock_cls, _ = _mock_arbiter_provider(
+            "VERDICT: APPROVE\nCONFIDENCE: 0.9"
+        )
+        # Simulate parallel mode: 3 fan-out participants + 1 bystander
+        participant_a = _make_model_config(model="participant-a-v1")
+        participant_b = _make_model_config(model="participant-b-v1")
+        participant_c = _make_model_config(model="participant-c-v1")
+        bystander = _make_model_config(
+            model="bystander-v1",
+            fitness=RoleFitness(verifier=0.90),
+        )
+        registry = {
+            "p-a": participant_a,
+            "p-b": participant_b,
+            "p-c": participant_c,
+            "bystander": bystander,
+        }
+        config = PipelineConfig()
+        engine = ArbiterEngine(config, registry)
+
+        with patch(_ARBITER_PROVIDER, mock_cls):
+            review = await engine.review(
+                stage=PipelineStage.VERIFY,
+                stage_model="participant-a-v1",
+                stage_output="synthesized output",
+                task=_make_task(),
+                exclude_models=[
+                    "participant-a-v1",
+                    "participant-b-v1",
+                    "participant-c-v1",
+                ],
+            )
+
+        # Only the bystander should be eligible
+        assert review.arbiter_model == "bystander-v1"
+
+    async def test_exclude_models_all_excluded_returns_none(self):
+        """When all models are excluded, arbiter degrades gracefully."""
+        # All models are participants — no bystander available
+        registry = {
+            "p-a": _make_model_config(model="model-a-v1"),
+            "p-b": _make_model_config(model="model-b-v1"),
+        }
+        config = PipelineConfig()
+        engine = ArbiterEngine(config, registry)
+
+        review = await engine.review(
+            stage=PipelineStage.VERIFY,
+            stage_model="model-a-v1",
+            stage_output="output",
+            task=_make_task(),
+            exclude_models=["model-a-v1", "model-b-v1"],
+        )
+
+        assert review is None
+
+    async def test_exclude_models_global_override_also_excluded(self):
+        """Global arbiter_model override is skipped if it's in exclude_models."""
+        mock_cls, _ = _mock_arbiter_provider(
+            "VERDICT: APPROVE\nCONFIDENCE: 0.9"
+        )
+        registry = {
+            "p-a": _make_model_config(model="model-a-v1"),
+            "p-b": _make_model_config(model="model-b-v1"),
+            "bystander": _make_model_config(
+                model="bystander-v1",
+                fitness=RoleFitness(verifier=0.90),
+            ),
+        }
+        # Global override points to a fan-out participant
+        config = PipelineConfig(arbiter_model="p-b")
+        engine = ArbiterEngine(config, registry)
+
+        with patch(_ARBITER_PROVIDER, mock_cls):
+            review = await engine.review(
+                stage=PipelineStage.VERIFY,
+                stage_model="model-a-v1",
+                stage_output="output",
+                task=_make_task(),
+                exclude_models=["model-a-v1", "model-b-v1"],
+            )
+
+        # p-b is excluded despite being the global override → picks bystander
+        assert review.arbiter_model == "bystander-v1"
+
 
 # ── Feedback Injection ─────────────────────────────────────────────
 

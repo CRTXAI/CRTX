@@ -903,11 +903,15 @@ def _select_top_models(
     registry: dict[str, ModelConfig],
     n: int = 3,
 ) -> dict[str, ModelConfig]:
-    """Select the top N models from the registry by average fitness.
+    """Select the top N models from the registry with provider diversity.
 
     Used by parallel and debate orchestrators to avoid fanning out to
-    the entire registry (which could be 8+ models). Selects models
-    with the highest average fitness across all roles.
+    the entire registry (which could be 8+ models). Enforces max 1
+    model per provider: picks the highest-fitness model from each
+    provider first, then fills remaining slots from providers whose
+    best model was already taken. This prevents two models from the
+    same provider (e.g. Claude Opus + Claude Sonnet) from occupying
+    multiple fan-out slots.
 
     Returns at least 2 models (minimum for parallel/debate), or the
     full registry if it has fewer than N entries.
@@ -920,7 +924,73 @@ def _select_top_models(
         return (f.architect + f.implementer + f.refactorer + f.verifier) / 4
 
     ranked = sorted(registry.items(), key=lambda kv: avg_fitness(kv[1]), reverse=True)
-    return dict(ranked[:n])
+
+    # Pass 1: one model per provider (highest fitness from each)
+    selected: dict[str, ModelConfig] = {}
+    used_providers: set[str] = set()
+    remaining: list[tuple[str, ModelConfig]] = []
+
+    for key, cfg in ranked:
+        if len(selected) >= n:
+            break
+        if cfg.provider not in used_providers:
+            selected[key] = cfg
+            used_providers.add(cfg.provider)
+        else:
+            remaining.append((key, cfg))
+
+    # Pass 2: if fewer unique providers than N, fill from next-best models
+    for key, cfg in remaining:
+        if len(selected) >= n:
+            break
+        selected[key] = cfg
+
+    return selected
+
+
+def _detect_incomplete_sections(output: str) -> list[str]:
+    """Scan synthesized output for signs of incompleteness.
+
+    Returns a list of human-readable issue descriptions. An empty list
+    means no incompleteness was detected.
+    """
+    issues: list[str] = []
+
+    # Check for placeholder function bodies
+    if re.search(r"^\s+(pass|\.\.\.)\s*$", output, re.MULTILINE):
+        issues.append("Functions with `pass` or `...` placeholder bodies")
+
+    # Check for TODO/FIXME comments
+    if re.search(r"#\s*(TODO|FIXME)", output):
+        issues.append("TODO/FIXME comments indicating unfinished work")
+
+    # Check for files listed in a structure tree but never implemented
+    declared_files = set(re.findall(r"[├└│─\-\|]\s*(\S+\.py)\b", output))
+    implemented_files = set(
+        re.findall(r"^#\s*file:\s*(.+\.py)\s*$", output, re.MULTILINE)
+    )
+    missing = declared_files - implemented_files
+    if missing:
+        issues.append(
+            f"Files listed in structure but never implemented: "
+            f"{', '.join(sorted(missing))}"
+        )
+
+    # Check for "implementation left as exercise" patterns
+    lazy_patterns = [
+        r"implementation left as (?:an )?exercise",
+        r"implement (?:this|here|the rest)",
+        r"add (?:your|the) (?:implementation|logic) here",
+        r"placeholder",
+    ]
+    for pattern in lazy_patterns:
+        if re.search(pattern, output, re.IGNORECASE):
+            issues.append(
+                f"Lazy-implementation language detected (matches: {pattern!r})"
+            )
+            break
+
+    return issues
 
 
 class ParallelOrchestrator:
@@ -981,7 +1051,7 @@ class ParallelOrchestrator:
         fan_out_tasks = {}
         for key, cfg in self._registry.items():
             fan_out_tasks[key] = self._call_model(
-                key, cfg, "architect", timeout,
+                key, cfg, "parallel_generate", timeout,
             )
 
         results = await asyncio.gather(
@@ -1191,7 +1261,50 @@ class ParallelOrchestrator:
             cost=synth_cost,
         )
 
+        # Phase 5b: Completion pass — fill gaps the synthesis left behind
+        incomplete = _detect_incomplete_sections(synthesized_output)
+        if incomplete:
+            logger.info(
+                "Completion pass triggered: %d issues detected", len(incomplete),
+            )
+            await self._emit(
+                "stage_started",
+                stage="parallel_completion",
+                model=synth_key,
+            )
+            completion_msg = await self._call_model(
+                synth_key,
+                synth_cfg,
+                "parallel_completion",
+                timeout,
+                incomplete_sections=incomplete,
+                synthesized_output=synthesized_output,
+            )
+            all_messages.append(completion_msg)
+            synthesized_output = completion_msg.content
+
+            completion_cost = (
+                completion_msg.token_usage.cost
+                if completion_msg.token_usage
+                else 0.0
+            )
+            await self._emit(
+                "stage_completed",
+                stage="parallel_completion",
+                model=synth_key,
+                duration=time.monotonic() - start,
+                cost=completion_cost,
+            )
+        else:
+            logger.info("Completion pass skipped — no incomplete sections detected")
+
         # Phase 6: Arbiter review of synthesized output + retry on REJECT
+        # Exclude ALL fan-out participants + synthesizer from arbiter selection
+        _participant_models = [
+            self._registry[k].model for k in individual_outputs
+        ]
+        _participant_models.append(synth_cfg.model)
+
         _MAX_SYNTH_RETRIES = 2
         final_reject = False
 
@@ -1201,6 +1314,7 @@ class ParallelOrchestrator:
                 stage_model=winner_cfg.model,
                 stage_output=synthesized_output,
                 task=self._task,
+                exclude_models=_participant_models,
             )
             if review is not None:
                 arbiter_reviews.append(review)
@@ -1244,6 +1358,7 @@ class ParallelOrchestrator:
                             stage_model=winner_cfg.model,
                             stage_output=synthesized_output,
                             task=self._task,
+                            exclude_models=_participant_models,
                         )
                         if review is not None:
                             arbiter_reviews.append(review)
@@ -1609,12 +1724,19 @@ class DebateOrchestrator:
         )
 
         # Phase 5: Arbiter review of judgment
+        # Exclude ALL debaters + judge from arbiter selection
+        _participant_models = [
+            self._registry[k].model for k in proposals
+        ]
+        _participant_models.append(judge_cfg.model)
+
         if self._config.arbiter_mode != ArbiterMode.OFF:
             review = await self._arbiter.review(
                 stage=PipelineStage.VERIFY,
                 stage_model=judge_cfg.model,
                 stage_output=judgment,
                 task=self._task,
+                exclude_models=_participant_models,
             )
             if review is not None:
                 arbiter_reviews.append(review)
@@ -1998,12 +2120,19 @@ class ReviewOrchestrator:
         )
 
         # Phase 4: Arbiter review of synthesis
+        # Exclude ALL reviewers + synthesizer from arbiter selection
+        _participant_models = [
+            self._registry[k].model for k in individual_analyses
+        ]
+        _participant_models.append(synth_cfg.model)
+
         if self._config.arbiter_mode != ArbiterMode.OFF:
             review = await self._arbiter.review(
                 stage=PipelineStage.VERIFY,
                 stage_model=synth_cfg.model,
                 stage_output=synthesized_review,
                 task=self._task,
+                exclude_models=_participant_models,
             )
             if review is not None:
                 arbiter_reviews.append(review)
@@ -2389,6 +2518,12 @@ class ImproveOrchestrator:
         )
 
         # Phase 6: Arbiter review + retry on REJECT
+        # Exclude ALL fan-out participants + synthesizer from arbiter selection
+        _participant_models = [
+            self._registry[k].model for k in individual_outputs
+        ]
+        _participant_models.append(synth_cfg.model)
+
         _MAX_SYNTH_RETRIES = 2
         final_reject = False
 
@@ -2398,6 +2533,7 @@ class ImproveOrchestrator:
                 stage_model=winner_cfg.model,
                 stage_output=synthesized_output,
                 task=self._task,
+                exclude_models=_participant_models,
             )
             if review is not None:
                 arbiter_reviews.append(review)
@@ -2439,6 +2575,7 @@ class ImproveOrchestrator:
                             stage_model=winner_cfg.model,
                             stage_output=synthesized_output,
                             task=self._task,
+                            exclude_models=_participant_models,
                         )
                         if review is not None:
                             arbiter_reviews.append(review)

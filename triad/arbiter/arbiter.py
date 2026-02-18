@@ -61,6 +61,7 @@ class ArbiterEngine:
         stage_output: str,
         task: TaskSpec,
         architect_output: str = "",
+        exclude_models: list[str] | None = None,
     ) -> ArbiterReview | None:
         """Review a stage's output and return a structured verdict.
 
@@ -74,16 +75,21 @@ class ArbiterEngine:
             stage_output: The raw content from the stage's AgentMessage.
             task: The original task specification.
             architect_output: The Architect's output for reference.
+            exclude_models: Additional model IDs to exclude from arbiter
+                selection (e.g. all fan-out participants in parallel mode).
 
         Returns:
             ArbiterReview, or None if all arbiter models are unavailable.
         """
         tried_keys: list[str] = []
+        excluded_model_ids = {stage_model}
+        if exclude_models:
+            excluded_model_ids.update(exclude_models)
 
         while True:
             try:
                 arbiter_key = self._resolve_arbiter_model(
-                    stage_model, exclude=tried_keys,
+                    excluded_model_ids, exclude=tried_keys,
                 )
             except RuntimeError:
                 # No arbiter model available — degrade gracefully
@@ -168,14 +174,20 @@ class ArbiterEngine:
 
     def _resolve_arbiter_model(
         self,
-        stage_model: str,
+        excluded_model_ids: set[str],
         exclude: list[str] | None = None,
     ) -> str:
-        """Select an arbiter model different from the stage model.
+        """Select an arbiter model not in the excluded model IDs.
 
         Resolution order:
         1. config.arbiter_model (global override) — unless excluded/unhealthy
-        2. Best available model excluding the stage model and excluded keys
+        2. Best available model excluding all listed model IDs and keys
+
+        Args:
+            excluded_model_ids: Set of model IDs (e.g. ``{"openai/o3",
+                "anthropic/claude-3-opus"}``) that must not serve as arbiter.
+                In parallel/debate modes this includes ALL participants.
+            exclude: Registry keys already tried (for retry fallback).
 
         Raises:
             RuntimeError: If no valid arbiter model is available.
@@ -188,22 +200,22 @@ class ArbiterEngine:
             if (
                 key in self._registry
                 and key not in exclude
-                and self._registry[key].model != stage_model
+                and self._registry[key].model not in excluded_model_ids
                 and (not self._health or self._health.is_healthy(key))
             ):
                 return key
 
-        # 2. Best available model excluding the stage model, excluded, unhealthy
+        # 2. Best available model excluding all participant models, tried keys, unhealthy
         candidates = {
             k: v for k, v in self._registry.items()
-            if v.model != stage_model
+            if v.model not in excluded_model_ids
             and k not in exclude
             and (not self._health or self._health.is_healthy(k))
         }
         if not candidates:
             raise RuntimeError(
-                f"No arbiter model available for stage model "
-                f"'{stage_model}' (excluded={exclude})"
+                f"No arbiter model available (excluded_models="
+                f"{excluded_model_ids}, excluded_keys={exclude})"
             )
 
         # Pick the candidate with the highest verifier fitness — the

@@ -6,6 +6,7 @@ import pytest
 
 from triad.orchestrator import (
     ParallelOrchestrator,
+    _detect_incomplete_sections,
     _extract_scores,
     _get_tiebreaker_key,
     run_pipeline,
@@ -869,6 +870,139 @@ class TestSelectTopModels:
         result = _select_top_models(registry, n=3)
         assert result == registry
 
+    def test_provider_diversity_one_per_provider(self):
+        """With 4 providers, 3-model fan-out picks best from 3 different providers."""
+        from triad.orchestrator import _select_top_models
+
+        registry = {
+            # Anthropic — two models, highest fitness overall
+            "claude-opus": _make_model_config(
+                model="claude-opus-v1", provider="anthropic",
+                fitness=RoleFitness(
+                    architect=0.95, implementer=0.90,
+                    refactorer=0.90, verifier=0.90,
+                ),
+            ),
+            "claude-sonnet": _make_model_config(
+                model="claude-sonnet-v1", provider="anthropic",
+                fitness=RoleFitness(
+                    architect=0.85, implementer=0.85,
+                    refactorer=0.85, verifier=0.85,
+                ),
+            ),
+            # OpenAI
+            "o3": _make_model_config(
+                model="o3-v1", provider="openai",
+                fitness=RoleFitness(
+                    architect=0.88, implementer=0.82,
+                    refactorer=0.85, verifier=0.88,
+                ),
+            ),
+            # Google
+            "gemini-pro": _make_model_config(
+                model="gemini-pro-v1", provider="google",
+                fitness=RoleFitness(
+                    architect=0.80, implementer=0.80,
+                    refactorer=0.80, verifier=0.80,
+                ),
+            ),
+        }
+        result = _select_top_models(registry, n=3)
+        assert len(result) == 3
+        # Should pick best from 3 different providers
+        providers = {registry[k].provider for k in result}
+        assert len(providers) == 3
+        # claude-opus (anthropic), o3 (openai), gemini-pro (google)
+        assert "claude-opus" in result
+        assert "o3" in result
+        assert "gemini-pro" in result
+        # claude-sonnet should NOT be picked despite being 3rd highest fitness
+        assert "claude-sonnet" not in result
+
+    def test_provider_diversity_falls_back_when_fewer_providers(self):
+        """When fewer providers than N, second model from same provider fills the gap."""
+        from triad.orchestrator import _select_top_models
+
+        registry = {
+            "claude-opus": _make_model_config(
+                model="claude-opus-v1", provider="anthropic",
+                fitness=RoleFitness(
+                    architect=0.95, implementer=0.90,
+                    refactorer=0.90, verifier=0.90,
+                ),
+            ),
+            "claude-sonnet": _make_model_config(
+                model="claude-sonnet-v1", provider="anthropic",
+                fitness=RoleFitness(
+                    architect=0.85, implementer=0.85,
+                    refactorer=0.85, verifier=0.85,
+                ),
+            ),
+            "o3": _make_model_config(
+                model="o3-v1", provider="openai",
+                fitness=RoleFitness(
+                    architect=0.88, implementer=0.82,
+                    refactorer=0.85, verifier=0.88,
+                ),
+            ),
+            "gpt-4o-mini": _make_model_config(
+                model="gpt-4o-mini-v1", provider="openai",
+                fitness=RoleFitness(
+                    architect=0.60, implementer=0.60,
+                    refactorer=0.60, verifier=0.60,
+                ),
+            ),
+        }
+        # Only 2 providers, but n=3 — must reuse a provider
+        result = _select_top_models(registry, n=3)
+        assert len(result) == 3
+        # Pass 1: claude-opus (anthropic) + o3 (openai)
+        # Pass 2: claude-sonnet (next-best remaining)
+        assert "claude-opus" in result
+        assert "o3" in result
+        assert "claude-sonnet" in result
+        assert "gpt-4o-mini" not in result
+
+    def test_provider_diversity_same_provider_all_models(self):
+        """When all models share a provider, falls back to pure fitness ranking."""
+        from triad.orchestrator import _select_top_models
+
+        registry = {
+            "high": _make_model_config(
+                model="high-v1", provider="anthropic",
+                fitness=RoleFitness(
+                    architect=0.95, implementer=0.95,
+                    refactorer=0.95, verifier=0.95,
+                ),
+            ),
+            "mid": _make_model_config(
+                model="mid-v1", provider="anthropic",
+                fitness=RoleFitness(
+                    architect=0.80, implementer=0.80,
+                    refactorer=0.80, verifier=0.80,
+                ),
+            ),
+            "low": _make_model_config(
+                model="low-v1", provider="anthropic",
+                fitness=RoleFitness(
+                    architect=0.50, implementer=0.50,
+                    refactorer=0.50, verifier=0.50,
+                ),
+            ),
+            "lowest": _make_model_config(
+                model="lowest-v1", provider="anthropic",
+                fitness=RoleFitness(
+                    architect=0.30, implementer=0.30,
+                    refactorer=0.30, verifier=0.30,
+                ),
+            ),
+        }
+        result = _select_top_models(registry, n=2)
+        assert len(result) == 2
+        # Same behavior as before — top 2 by fitness
+        assert "high" in result
+        assert "mid" in result
+
 
 # ── Parallel Event Emissions ─────────────────────────────────────
 
@@ -1093,3 +1227,236 @@ class TestParallelFallback:
                     "architect",
                     120,
                 )
+
+
+# ── _detect_incomplete_sections ──────────────────────────────────
+
+
+class TestDetectIncompleteSections:
+    """Tests for the incompleteness scanner."""
+
+    def test_detects_pass_placeholder(self):
+        code = "def foo():\n    pass\n"
+        issues = _detect_incomplete_sections(code)
+        assert any("pass" in i for i in issues)
+
+    def test_detects_ellipsis_placeholder(self):
+        code = "def foo():\n    ...\n"
+        issues = _detect_incomplete_sections(code)
+        assert any("..." in i or "pass" in i for i in issues)
+
+    def test_detects_todo_comments(self):
+        code = "def foo():\n    # TODO: implement this\n    return None\n"
+        issues = _detect_incomplete_sections(code)
+        assert any("TODO" in i for i in issues)
+
+    def test_detects_fixme_comments(self):
+        code = "def foo():\n    # FIXME: broken\n    return None\n"
+        issues = _detect_incomplete_sections(code)
+        assert any("TODO" in i or "FIXME" in i for i in issues)
+
+    def test_detects_missing_file_implementations(self):
+        code = (
+            "## Project Structure\n"
+            "├── src/main.py\n"
+            "├── src/utils.py\n"
+            "└── src/models.py\n\n"
+            "# file: src/main.py\n"
+            "```python\nprint('hello')\n```\n"
+        )
+        issues = _detect_incomplete_sections(code)
+        assert any("utils.py" in i or "models.py" in i for i in issues)
+
+    def test_no_issues_for_complete_code(self):
+        code = (
+            "# file: src/main.py\n"
+            "```python\n"
+            "def greet(name: str) -> str:\n"
+            "    return f'Hello, {name}!'\n"
+            "```\n"
+        )
+        issues = _detect_incomplete_sections(code)
+        assert issues == []
+
+    def test_detects_lazy_implementation_language(self):
+        code = "# Implementation left as exercise\ndef foo(): return 1\n"
+        issues = _detect_incomplete_sections(code)
+        assert any("Lazy" in i for i in issues)
+
+    def test_detects_placeholder_keyword(self):
+        code = "# This is a placeholder for the real implementation\ndef foo(): return 1\n"
+        issues = _detect_incomplete_sections(code)
+        assert any("Lazy" in i or "placeholder" in i.lower() for i in issues)
+
+    def test_pass_inside_string_not_detected(self):
+        """'pass' as part of a word like 'password' should not trigger."""
+        code = "password = 'secret'\nbypass = True\n"
+        issues = _detect_incomplete_sections(code)
+        # Should not detect placeholder 'pass' in 'password' or 'bypass'
+        assert not any("`pass`" in i for i in issues)
+
+
+# ── Completion Pass Integration ──────────────────────────────────
+
+
+class TestParallelCompletionPass:
+    """Tests for the completion pass after synthesis."""
+
+    async def test_completion_fires_when_incomplete(self):
+        """Completion pass should fire when synthesis output has TODO markers."""
+        registry = _make_three_model_registry()
+        # 3 fan-out + 6 reviews + 1 synthesis (with TODO) + 1 completion = 11
+        incomplete_synthesis = _make_agent_message(
+            "# file: main.py\ndef handle():\n    # TODO: implement\n    pass"
+        )
+        complete_output = _make_agent_message(
+            "# file: main.py\ndef handle():\n    return {'status': 'ok'}"
+        )
+        fan_out = [_make_agent_message(f"solution-{i}") for i in range(3)]
+        reviews = [_make_agent_message(_make_review_content(8, 8, 8)) for _ in range(6)]
+        responses = fan_out + reviews + [incomplete_synthesis, complete_output]
+
+        mock_cls, _ = _mock_provider(responses)
+
+        with (
+            patch(_PROVIDER, mock_cls),
+            patch(_ARBITER_REVIEW, AsyncMock(return_value=_make_approve_review())),
+            patch("triad.orchestrator.render_prompt") as mock_render,
+        ):
+            mock_render.return_value = "system prompt"
+            orch = ParallelOrchestrator(
+                task=_make_task(),
+                config=PipelineConfig(
+                    pipeline_mode="parallel", arbiter_mode="off",
+                ),
+                registry=registry,
+            )
+            result = await orch.run()
+
+        template_names = [call.args[0] for call in mock_render.call_args_list]
+        assert "parallel_completion" in template_names
+        assert result.success is True
+
+    async def test_completion_skipped_when_output_complete(self):
+        """Completion pass should not fire when synthesis is already complete."""
+        registry = _make_three_model_registry()
+        # 3 fan-out + 6 reviews + 1 synthesis (complete) = 10
+        complete_synthesis = _make_agent_message(
+            "# file: main.py\n"
+            "def handle():\n"
+            "    return {'status': 'ok'}\n"
+        )
+        fan_out = [_make_agent_message(f"solution-{i}") for i in range(3)]
+        reviews = [_make_agent_message(_make_review_content(8, 8, 8)) for _ in range(6)]
+        responses = fan_out + reviews + [complete_synthesis]
+
+        mock_cls, _ = _mock_provider(responses)
+
+        with (
+            patch(_PROVIDER, mock_cls),
+            patch(_ARBITER_REVIEW, AsyncMock(return_value=_make_approve_review())),
+            patch("triad.orchestrator.render_prompt") as mock_render,
+        ):
+            mock_render.return_value = "system prompt"
+            orch = ParallelOrchestrator(
+                task=_make_task(),
+                config=PipelineConfig(
+                    pipeline_mode="parallel", arbiter_mode="off",
+                ),
+                registry=registry,
+            )
+            result = await orch.run()
+
+        template_names = [call.args[0] for call in mock_render.call_args_list]
+        assert "parallel_completion" not in template_names
+        assert result.success is True
+
+    async def test_completion_pass_output_replaces_synthesis(self):
+        """The completion pass output should become the final synthesized_output."""
+        registry = _make_three_model_registry()
+        incomplete_synthesis = _make_agent_message(
+            "# file: main.py\ndef handle():\n    # TODO: implement\n    pass"
+        )
+        completed_code = _make_agent_message(
+            "# file: main.py\ndef handle():\n    return {'status': 'ok'}"
+        )
+        fan_out = [_make_agent_message(f"solution-{i}") for i in range(3)]
+        reviews = [_make_agent_message(_make_review_content(8, 8, 8)) for _ in range(6)]
+        responses = fan_out + reviews + [incomplete_synthesis, completed_code]
+
+        mock_cls, _ = _mock_provider(responses)
+
+        with (
+            patch(_PROVIDER, mock_cls),
+            patch(_ARBITER_REVIEW, AsyncMock(return_value=None)),
+        ):
+            orch = ParallelOrchestrator(
+                task=_make_task(),
+                config=PipelineConfig(
+                    pipeline_mode="parallel", arbiter_mode="off",
+                ),
+                registry=registry,
+            )
+            result = await orch.run()
+
+        # The final output should be from the completion pass, not the original synthesis
+        assert "return {'status': 'ok'}" in result.parallel_result.synthesized_output
+
+    async def test_completion_pass_cost_included_in_total(self):
+        """Completion pass token cost should be included in the total."""
+        registry = _make_three_model_registry()
+        incomplete_synthesis = _make_agent_message(
+            "# file: main.py\ndef handle():\n    # TODO: implement\n    pass",
+            cost=0.10,
+        )
+        completed = _make_agent_message(
+            "# file: main.py\ndef handle():\n    return 1",
+            cost=0.15,
+        )
+        fan_out = [_make_agent_message(f"s-{i}", cost=0.10) for i in range(3)]
+        reviews = [_make_agent_message(_make_review_content(8, 8, 8), cost=0.01) for _ in range(6)]
+        responses = fan_out + reviews + [incomplete_synthesis, completed]
+
+        mock_cls, _ = _mock_provider(responses)
+
+        with (
+            patch(_PROVIDER, mock_cls),
+            patch(_ARBITER_REVIEW, AsyncMock(return_value=None)),
+        ):
+            orch = ParallelOrchestrator(
+                task=_make_task(),
+                config=PipelineConfig(
+                    pipeline_mode="parallel", arbiter_mode="off",
+                ),
+                registry=registry,
+            )
+            result = await orch.run()
+
+        # 3*0.10 + 6*0.01 + 0.10 + 0.15 = 0.30 + 0.06 + 0.10 + 0.15 = 0.61
+        assert result.total_cost > 0.55
+
+    async def test_fan_out_uses_parallel_generate_template(self):
+        """Fan-out should use 'parallel_generate' template, not 'architect'."""
+        registry = _make_three_model_registry()
+        responses = [_make_agent_message(f"out-{i}") for i in range(10)]
+        mock_cls, _ = _mock_provider(responses)
+
+        with (
+            patch(_PROVIDER, mock_cls),
+            patch(_ARBITER_REVIEW, AsyncMock(return_value=_make_approve_review())),
+            patch("triad.orchestrator.render_prompt") as mock_render,
+        ):
+            mock_render.return_value = "system prompt"
+            orch = ParallelOrchestrator(
+                task=_make_task(),
+                config=PipelineConfig(
+                    pipeline_mode="parallel", arbiter_mode="off",
+                ),
+                registry=registry,
+            )
+            await orch.run()
+
+        template_names = [call.args[0] for call in mock_render.call_args_list]
+        # Fan-out calls should use parallel_generate, not architect
+        assert "parallel_generate" in template_names
+        assert "architect" not in template_names

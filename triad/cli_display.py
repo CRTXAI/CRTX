@@ -350,13 +350,14 @@ class ConfigScreen:
 _STAGE_ORDER = ["architect", "implement", "refactor", "verify"]
 
 # Parallel-mode phase display
-_PARALLEL_PHASE_ORDER = ["fan_out", "cross_review", "voting", "synthesis", "arbiter"]
+_PARALLEL_PHASE_ORDER = ["fan_out", "cross_review", "voting", "synthesis", "completion", "arbiter"]
 
 _PARALLEL_PHASE_LABELS = {
     "fan_out": "Fan-Out",
     "cross_review": "Cross-Review",
     "voting": "Voting",
     "synthesis": "Synthesis",
+    "completion": "Completion",
     "arbiter": "Arbiter",
 }
 
@@ -366,6 +367,7 @@ _PARALLEL_EVENT_MAP = {
     "parallel_cross_review": "cross_review",
     "parallel_synthesis": "synthesis",
     "parallel_synthesis_retry": "synthesis",
+    "parallel_completion": "completion",
 }
 
 # Debate-mode phase display

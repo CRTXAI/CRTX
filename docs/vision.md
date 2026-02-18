@@ -107,10 +107,7 @@ v0.2 — Power User Features
   session-based project continuity. The tool becomes a
   development partner, not just a code generator.
 
-v0.3 — Collective Intelligence
-  Chain-of-thought fusion, ensemble consensus, cognitive
-  sub-routing. The models don't just take turns — they
-  think together. This is the technical moat.
+v0.3 — Advanced pipeline modes (coming soon)
 
 v0.4 — Conversational Interface
   Web/chat UI on top of the same engine. Describe your idea,

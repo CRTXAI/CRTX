@@ -329,7 +329,7 @@ At 15 tasks/week: ~$87–180/month for sequential+arbiter, ~$130–180 for paral
 Planned for v0.2.0+ after community feedback:
 
 - **`triad advise`**: Full architectural consultation with adversarial review (see docs/advisor.md)
-- **Collective intelligence mode**: Multi-model reasoning fusion — chain-of-thought fusion, ensemble consensus, iterative refinement, cognitive sub-routing (see docs/collective.md)
+- **v0.3 — Advanced multi-model modes (coming soon)**
 - **Codebase audit**: `triad audit` scans existing code with multiple models independently, cross-validates findings through the Arbiter, produces tiered report (critical/important/suggestion/dismissed), verifies fixes on re-run (see docs/audit.md)
 - **Tournament mode**: Run all registered models on same task, score and rank outputs
 - **Fitness benchmarking system**: Standardized task suites to measure model strengths
