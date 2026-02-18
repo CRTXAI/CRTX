@@ -143,7 +143,7 @@
   <!-- Text section (right portion, centered on x=710) -->
   <text x="710" y="155" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="96" font-weight="700" letter-spacing="18" fill="#00ffaa" opacity="0.95">CRTX</text>
   <text x="710" y="198" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="18" font-weight="400" letter-spacing="6" fill="#00cc88" opacity="0.75">/k&#xF4;r'teks/</text>
-  <text x="710" y="222" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="12" font-weight="300" fill="#00cc88" opacity="0.40">the outer layer of the brain — reasoning, judgment, decision-making</text>
+  <text x="710" y="222" text-anchor="middle" font-family="'SF Mono','Fira Code','JetBrains Mono','Courier New',monospace" font-size="12" font-weight="300" fill="#55eebb" opacity="0.65">the outer layer of the brain — reasoning, judgment, decision-making</text>
 
   <!-- Separator line -->
   <line x1="500" y1="242" x2="920" y2="242" stroke="#00ff88" stroke-width="0.5" opacity="0.15"/>
