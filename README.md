@@ -1,472 +1,213 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="CRTX" width="800"/>
-</p>
-
-<!-- TODO: Replace with terminal recording (asciinema/VHS) showing:
-     crtx setup → crtx (REPL + logo) → task → config screen → live display → summary -->
-<!-- <p align="center"><img src="assets/demo.gif" alt="CRTX CLI demo" width="700"/></p> -->
-
-<p align="center">
-  <strong>CRTX</strong> (/kôr'teks/) — the outer layer of the brain responsible for reasoning, judgment, and decision-making. The part that reviews its own work.
+  <img src="github-social-preview.png" alt="CRTX" width="600">
 </p>
 
 <p align="center">
-  <strong>Multi-model AI orchestration for code generation — route tasks through specialized LLM agents with consensus, adversarial review, and an independent Arbiter layer.</strong>
+  <strong>Multi-model AI orchestration with adversarial verification.</strong>
 </p>
 
 <p align="center">
   <a href="#quick-start">Quick Start</a> •
-  <a href="#getting-started">Getting Started</a> •
   <a href="#how-it-works">How It Works</a> •
   <a href="#the-arbiter">The Arbiter</a> •
   <a href="#supported-models">Supported Models</a> •
-  <a href="docs/architecture.md">Architecture</a> •
-  <a href="CONTRIBUTING.md">Contributing</a>
+  <a href="#commands">Commands</a> •
+  <a href="#contributing">Contributing</a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/python-3.12+-00ff88?style=flat-square&logo=python&logoColor=00ff88" alt="Python 3.12+"/>
-  <img src="https://img.shields.io/badge/license-Apache%202.0-00dd77?style=flat-square" alt="License"/>
-  <img src="https://img.shields.io/badge/models-any%20LLM-66ff88?style=flat-square" alt="Any LLM"/>
+  <img src="https://img.shields.io/pypi/pyversions/crtx" alt="python 3.12+">
+  <img src="https://img.shields.io/github/license/CRTXAI/CRTX" alt="license Apache 2.0">
+  <img src="https://img.shields.io/pypi/v/crtx" alt="PyPI version">
 </p>
 
 ---
 
-## The Problem
+## What is CRTX?
 
-You paste code into an AI model. It looks right. You ship it. Then you find the hallucinated import, the missed edge case, the pattern violation that cascades through your codebase.
+Most AI coding tools send your prompt to one model and hope for the best. CRTX sends it to multiple models and makes them argue about it.
 
-Single-model code generation has a blindspot problem. Every model has biases, gaps, and failure modes — and the same model that wrote the bug can't reliably find it.
+Here's what actually happens when you run a task: an Architect designs the approach. An Implementer writes the code. A Refactorer cleans it up. A Verifier checks it. And then an independent Arbiter — running on a *different* model than the one that wrote the code — reviews everything and decides if it's good enough to ship.
 
-## The Fix
+If it's not? The Arbiter sends it back with specific feedback. The pipeline runs again. No human intervention required.
 
-CRTX routes your coding task through **multiple AI models in specialized roles**, with an **independent referee** that catches mistakes before they reach your codebase.
-```
-Task -> [Architect] -> [Implementer] -> [Refactor] -> [Verify] -> Production Code
-             |              |              |             |
-         Arbiter         Arbiter        Arbiter       Arbiter
-      (different model reviews each stage)
-```
-
-Each model does what it's best at. A different model checks the work. The code that survives is production-ready.
-
----
+The result is code that's been debated, reviewed, and stress-tested by multiple AI models before you ever see it.
 
 ## Quick Start
 
 ```bash
 pip install crtx
-crtx setup          # Interactive API key configuration
-crtx                # Launch interactive session
+crtx setup        # configure your API keys
+crtx demo         # 60-second guided first run
 ```
 
-That's it. `crtx setup` walks you through API key configuration with live validation. `crtx` launches an interactive session with a branded terminal UI, real-time pipeline status, and a persistent REPL.
-
----
-
-## Getting Started
-
-### First-Time Setup
+Or jump straight in:
 
 ```bash
-crtx setup
+crtx run "Build a REST API with authentication and rate limiting"
 ```
 
-Interactive wizard that prompts for API keys (Anthropic, OpenAI, Google, xAI), validates each key against its provider, and saves them to `~/.crtx/keys.env`. You need at least one provider configured. For parallel and debate modes, you'll need at least two.
-
-```bash
-crtx setup --check    # Validate existing keys without re-prompting
-crtx setup --reset    # Clear saved keys and reconfigure
-```
-
-### Interactive Session (REPL)
-
-```bash
-crtx
-```
-
-Launches the interactive REPL. The REPL maintains session state — set your mode, routing strategy, and arbiter depth once, then run multiple tasks without repeating flags.
-
-```
-crtx ▸ mode parallel
-  Mode set to parallel
-
-crtx ▸ route quality_first
-  Route set to quality_first
-
-crtx ▸ Build a REST API with JWT authentication and rate limiting
-  # → Interactive config screen → real-time pipeline display → completion summary
-
-crtx ▸ status
-  Mode:    parallel
-  Route:   quality_first
-  Arbiter: bookend
-```
-
-Type `help` for all commands, `exit` or Ctrl+C to quit.
-
-### Direct Execution
-
-```bash
-# Run with interactive config screen (choose mode/route/arbiter before launch)
-crtx run "Build a REST API with JWT authentication and rate limiting"
-
-# Run with explicit flags (skips config screen)
-crtx run "Build a REST API" --mode sequential --route hybrid --arbiter bookend
-```
-
-When you run without explicit flags, CRTX shows an interactive config screen where you can cycle through modes, routing strategies, and arbiter settings with single keypresses before confirming. With explicit flags, the pipeline starts immediately.
-
----
+That's it. CRTX handles model selection, stage routing, cost optimization, and cross-model review automatically.
 
 ## How It Works
 
-CRTX uses a **sequential pipeline** with four stages. Each stage is handled by whichever model scores highest for that role:
+Every task flows through a pipeline of specialized stages. Each stage can be assigned to a different AI model based on what it's best at.
 
-| Stage | Role | What It Does |
-|-------|------|-------------|
-| **Architect** | Design the solution | Produces a technical scaffold: file structure, interfaces, data models, dependency map. |
-| **Implement** | Write the code | Takes the scaffold and produces complete, working implementation with error handling. |
-| **Refactor** | Improve and test | Restructures for clarity, adds edge case handling, writes comprehensive test suite. |
-| **Verify** | Validate everything | Reviews the complete output for correctness, security, and pattern compliance. |
+**Sequential mode** (the default) chains four stages together:
 
-Models don't just hand off and move on — any model can **suggest improvements** outside its assigned role. The Architect can flag an implementation concern. The Implementer can propose a structural change. Suggestions are tracked, evaluated, and either accepted or escalated to consensus.
+1. **Architect** — Designs the approach, defines file structure, picks patterns
+2. **Implement** — Writes the actual code based on the architect's plan
+3. **Refactor** — Cleans up the implementation: better names, fewer bugs, tighter logic
+4. **Verify** — Reviews the final output for correctness, edge cases, and test coverage
 
----
+Each stage receives the output of the previous one. The Architect's plan feeds the Implementer. The Implementer's code feeds the Refactorer. Context accumulates — nothing gets lost between stages.
+
+CRTX also supports **parallel mode** (all models solve independently, then cross-review and merge the best approach) and **debate mode** (models write position papers, rebuttals, and final arguments before a judge picks the winner).
 
 ## The Arbiter
 
-The Arbiter is what makes CRTX fundamentally different from running the same prompt through multiple models.
+This is the thing that makes CRTX different from just chaining API calls together.
 
-**It's an independent referee.** The Arbiter never writes code. It never proposes architecture. Its only job is to find what's wrong with other models' work.
+The Arbiter is an independent reviewer that uses a *different model* than the one that generated the code. It's adversarial by design — its job is to find problems, not to agree.
 
-**It's always a different model.** If Claude wrote the code, GPT-4 or Grok arbitrates. If Gemini designed the architecture, Claude checks it. The system enforces this automatically — the same model never grades its own work.
+It returns one of four verdicts:
 
-**It assumes there are bugs.** The Arbiter's prompt starts from skepticism: *"Assume there are errors until proven otherwise."* This inverts the typical AI review pattern where models default to "looks good" and hedge with minor suggestions.
+- **APPROVE** — Code meets the spec, no issues found
+- **FLAG** — Minor concerns, but acceptable to ship
+- **REJECT** — Significant issues, sends structured feedback back to the pipeline for retry
+- **HALT** — Critical problems, stops the pipeline immediately
 
-**It can stop the pipeline.** Four verdicts:
+The Arbiter enforces a confidence floor: if a model says "APPROVE" but its confidence score is below 0.50, CRTX automatically downgrades it to FLAG. Low-confidence approvals are meaningless.
 
-| Verdict | Action |
-|---------|--------|
-| **APPROVE** | Continue. Output is sound. |
-| **FLAG** | Continue, but inject warnings for the next stage to address. |
-| **REJECT** | Re-run this stage with structured feedback. Max 2 retries. |
-| **HALT** | Stop everything. Present analysis for human decision. |
-
-When the Arbiter rejects, it doesn't just say "this is wrong." It provides structured feedback with severity, category, exact location, evidence, and a suggested fix — all injected into the retry prompt so the generating model knows exactly what to address.
-
-### Configurable Review Depth
-
-Not every task needs full review. Choose your safety level:
-```bash
-crtx run "..." --arbiter full       # Review every stage (critical features)
-crtx run "..." --arbiter bookend    # Review architecture + final output (default)
-crtx run "..." --arbiter final      # Review final output only (prototypes)
-crtx run "..." --arbiter off        # No review (rapid iteration)
-```
-
-Or in the REPL: `arbiter full` sets the depth for all subsequent tasks in the session.
-
----
-
-## Supported Models
-
-CRTX is **model-agnostic**. Any LLM that supports chat completions works. Add a new model by adding a TOML entry — no code changes required.
-
-### Pre-Configured Providers
-
-| Provider | Models | Best At |
-|----------|--------|---------|
-| **Anthropic** | Claude Opus, Sonnet, Haiku | Refactoring, verification, nuanced review |
-| **OpenAI** | GPT-4o, o3-mini | Fast implementation, broad language support |
-| **Google** | Gemini 2.5 Pro, Flash | Architecture, large context reasoning |
-| **xAI** | Grok 4, Grok 3 | Independent analysis, alternative perspectives |
-
-### Adding Models
-```toml
-# config/models.toml
-[models.deepseek-v3]
-provider = "deepseek"
-model = "deepseek-chat"
-roles = ["implement", "refactor"]
-cost_per_1k_input = 0.0001
-cost_per_1k_output = 0.0002
-```
-
-DeepSeek, Llama, Mistral, Ollama (local), vLLM (self-hosted) — if LiteLLM supports it, CRTX supports it.
-
----
-
-## Presets
-
-Instead of specifying `--mode`, `--route`, and `--arbiter` on every command, use a preset:
-
-| Preset | Mode | Route | Arbiter | Use Case |
-|--------|------|-------|---------|----------|
-| **balanced** (default) | sequential | hybrid | bookend | Standard development. Best cost/quality balance. |
-| **fast** | sequential | speed-first | off | Rapid iteration. Cheapest models, no review. |
-| **cheap** | sequential | cost-optimized | off | Budget-conscious. Lowest cost above fitness threshold. |
-| **thorough** | sequential | quality-first | full | Maximum quality. Best models, every stage reviewed. |
-| **explore** | parallel | hybrid | bookend | Fan out to 3+ models, cross-review, synthesize the best. |
-| **debate** | debate | quality-first | full | Structured debate. Best for architecture decisions and tradeoffs. |
-
-```bash
-crtx run "Build a REST API" --preset explore
-crtx run "Build a REST API" --preset fast
-
-# Override any part of a preset
-crtx run "Build a REST API" --preset explore --arbiter full
-```
-
-In the REPL:
-```
-crtx [balanced] ▸ preset explore
-  Mode set to parallel, route hybrid, arbiter bookend
-
-crtx [explore] ▸ preset fast
-  Mode set to sequential, route speed-first, arbiter off
-```
-
-No preset flag defaults to `balanced`. If you manually change mode/route/arbiter after selecting a preset, the prompt shows the current settings instead of a preset name.
-
----
-
-| Mode | How It Works | Best For |
-|------|-------------|----------|
-| **Sequential** (default) | Architect → Implement → Refactor → Verify, each building on the last | Standard development, most tasks |
-| **Parallel** | All models solve independently, cross-review, score, merge best approach | Complex problems with multiple valid solutions |
-| **Debate** | Position papers → rebuttals → final arguments → judgment | Architectural decisions, tradeoff analysis |
-
-```bash
-crtx run "..." --mode sequential   # Default
-crtx run "..." --mode parallel     # Fan-out + consensus
-crtx run "..." --mode debate       # Structured debate
-```
-
-Or in the REPL: `mode parallel` sets the mode for all subsequent tasks in the session.
-
----
+You can control how much review you want with `--arbiter off|final_only|bookend|full`. The default is `bookend` — the Arbiter reviews the Architect's plan and the Verifier's final output.
 
 ## Smart Routing
 
-CRTX assigns models to pipeline roles based on fitness benchmarks — each model is scored on how well it performs as Architect, Implementer, Refactorer, and Verifier. Four routing strategies let you optimize for what matters:
+Not every model is good at everything. CRTX knows this.
 
-| Strategy | Behavior |
-|----------|----------|
-| **quality-first** | Best model per role regardless of cost |
-| **cost-optimized** | Cheapest model above fitness threshold |
-| **speed-first** | Lowest-latency models preferred |
-| **hybrid** (default) | Quality for critical stages, cost-optimized for early stages |
+The routing engine assigns models to stages based on fitness scores, task type, and your chosen strategy:
 
-```bash
-crtx run "..." --route hybrid          # Default
-crtx run "..." --route quality-first   # Max quality
-crtx estimate "..." --compare-routes   # Compare costs
-```
+- **quality_first** — Best model for each stage regardless of cost
+- **cost_optimized** — Cheapest model that meets a minimum quality threshold
+- **speed_first** — Fastest model per stage
+- **hybrid** (default) — Quality-first for critical stages (refactor, verify), cost-optimized for everything else
 
-Or in the REPL: `route quality_first` sets the strategy for all subsequent tasks.
+Cross-stage diversity is enforced: no single model gets assigned more than 2 stages. This prevents monoculture — you want different perspectives reviewing the code, not the same model grading its own homework.
 
----
+## Auto-Fallback
 
-## Configuration
+If a provider goes down mid-pipeline (rate limit, timeout, outage), CRTX automatically substitutes the next best model and keeps going. No manual intervention, no restart required. A 5-minute cooldown prevents hammering a struggling provider.
 
-### API Keys
+## Apply Mode
 
-The recommended way to configure API keys is `crtx setup`, which validates keys and saves them for future sessions. Keys are loaded in this order (highest priority first):
-
-1. **Environment variables** — `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `XAI_API_KEY`
-2. **`~/.crtx/keys.env`** — User-level keys saved by `crtx setup`
-3. **`.env` in current directory** — Project-level overrides
-
-You only need keys for the providers you want to use. At least one provider must be configured.
+Generated code doesn't have to stay in the terminal. CRTX can write it directly to your project:
 
 ```bash
-# Recommended: interactive setup with validation
-crtx setup
-
-# Or set environment variables directly
-export ANTHROPIC_API_KEY=sk-ant-...
-export OPENAI_API_KEY=sk-...
+crtx run "Add WebSocket support to the chat server" --apply
 ```
 
-### Pipeline Defaults
+This gives you an interactive diff preview where you select which files to write. Add `--confirm` to skip the preview and write immediately.
 
-Pipeline defaults (mode, routing strategy, arbiter depth, timeout) are configured in `config/defaults.toml`. These can be overridden per-run via CLI flags or the interactive config screen.
+Safety features: git branch protection (won't write to main/master), conflict detection via SHA-256 checksums, AST-aware patching, and automatic rollback if post-apply tests fail.
 
----
+## Streaming Display
 
-## CLI Commands
+Pipeline output streams in real-time, token by token. You'll see syntax-highlighted code blocks as they're generated, with a pinned status bar at the bottom showing stage progress, running cost, and token count.
 
-| Command | Description |
+Stage indicators update live: ○ pending → ◉ active → ● complete → ⚠ fallback → ✗ failed.
+
+## Context Injection
+
+CRTX can scan your project and inject relevant code into the pipeline:
+
+```bash
+crtx run "Write tests for the auth module" --context .
+```
+
+It uses AST-aware Python analysis to extract class signatures, function definitions, and import graphs — then selects the most relevant files within a configurable token budget. Your models see your actual code patterns, not generic examples.
+
+## Supported Models
+
+CRTX works with any model supported by LiteLLM — that's 100+ providers. Out of the box, it's configured for:
+
+| Provider | Models |
+|----------|--------|
+| Anthropic | Claude Opus 4, Sonnet 4 |
+| OpenAI | GPT-4o, o3 |
+| Google | Gemini 2.5 Pro, Flash |
+| xAI | Grok |
+
+Add any LiteLLM-compatible model in `~/.crtx/config.toml`.
+
+## Commands
+
+| Command | What it does |
 |---------|-------------|
-| `crtx` | Launch interactive session (REPL mode) |
-| `crtx setup` | Configure API keys interactively |
-| `crtx setup --check` | Validate existing API keys |
-| `crtx setup --reset` | Clear keys and reconfigure |
-| `crtx run` | Run a full pipeline on a task |
-| `crtx plan` | Expand a rough idea into a structured task spec |
-| `crtx estimate` | Estimate cost before running |
-| `crtx review` | Multi-model PR review (CI/CD integration) |
-| `crtx review-code` | Multi-model review of existing code files |
-| `crtx improve` | Multi-model improvement of existing code |
-| `crtx models list` | Show registered models with fitness scores |
-| `crtx models check` | Verify API key connectivity |
-| `crtx config show` | Display current pipeline configuration |
-| `crtx sessions list` | Browse past pipeline runs |
-| `crtx sessions show` | View full session details |
-| `crtx dashboard` | Launch real-time browser visualization |
+| `crtx run "task"` | Run a pipeline |
+| `crtx demo` | Guided first-run experience |
+| `crtx review-code` | Multi-model code review on files or git diffs |
+| `crtx improve` | Review → improve pipeline with cross-model consensus |
+| `crtx repl` | Interactive shell with session history |
+| `crtx setup` | API key configuration |
+| `crtx models` | List available models with fitness scores |
+| `crtx estimate "task"` | Cost estimate before running |
+| `crtx sessions` | Browse past runs |
+| `crtx replay <id>` | Re-display a previous session |
+| `crtx dashboard` | Real-time web dashboard |
+
+### Presets
+
+Don't want to think about configuration? Use a preset:
 
 ```bash
-# Interactive session — persistent state, branded UI
-crtx
-
-# Run a task with interactive config screen
-crtx run "Add WebSocket support to the existing Express server"
-
-# Run with explicit flags (skips config screen)
-crtx run "Add WebSocket support" --mode sequential --route hybrid --arbiter bookend
-
-# Plan first, then run
-crtx plan "Build a data processing pipeline" --run
-
-# Review a PR diff
-crtx review --diff changes.patch --fail-on critical
-
-# Review existing code with multiple models
-crtx review-code src/middleware.py --preset thorough
-
-# Improve existing code
-crtx improve src/rate_limiter/ --focus "error handling, type safety"
-
-# Launch the real-time dashboard
-crtx dashboard --port 8420
+crtx run "task" --preset fast       # Sequential, streaming, cost-optimized
+crtx run "task" --preset thorough   # Full arbiter, quality-first routing
+crtx run "task" --preset cheap      # Minimum cost, speed routing
+crtx run "task" --preset explore    # Parallel mode, all models
+crtx run "task" --preset debate     # Debate mode with judgment
 ```
-
-The CLI uses [Rich](https://github.com/Textualize/rich) for a premium terminal experience — branded ASCII art, interactive config screens, real-time pipeline status with stage-by-stage progress, color-coded Arbiter verdicts, and a post-completion summary with export actions.
-
----
-
-## Review & Improve Existing Code
-
-CRTX doesn't just generate code — it can review and improve code you've already written.
-
-### Multi-Model Review
-
-Have 3+ models independently review your code, cross-check each other's findings, and produce a ranked report:
-
-```bash
-crtx review-code src/middleware.py
-crtx review-code src/rate_limiter/ --preset thorough
-```
-
-Each model finds bugs, security issues, and design problems independently. Then they review each other's findings — agreeing, disagreeing, and catching what others missed. Issues found by multiple models rank highest. Single-source findings are flagged as lower confidence.
-
-### Multi-Model Improve
-
-Have 3+ models each produce an improved version of your code, vote on the best, and synthesize:
-
-```bash
-crtx improve src/middleware.py
-crtx improve src/rate_limiter/ --focus "error handling, type safety"
-```
-
-Like parallel mode, but starting from your existing code instead of a task description. The Arbiter reviews the final improvement against your original. You see a diff before anything is written.
-
----
-
-CRTX supports domain-specific verification rules that the Arbiter checks in addition to general code quality:
-```toml
-# config/domain/my_rules.toml
-[rules.schema_consistency]
-description = "All database models must use integer primary keys"
-severity = "critical"
-pattern = "UUIDField|uuid4"
-action = "reject"
-
-[rules.test_coverage]
-description = "Every new service must have corresponding test file"
-severity = "warning"
-```
-
-We use CRTX to build a financial services platform — our custom rules enforce schema patterns, threading conventions, and audit trail requirements specific to our domain. You can do the same for yours.
-
----
-
-## How We Use It
-
-We built CRTX because we needed it. Our team uses CRTX as the primary development workflow for a financial services operating system with 2,900+ tests. Every new feature, every module, every refactor goes through the pipeline. The Arbiter has caught schema mismatches, hallucinated dependencies, over-engineered abstractions, and integration failures — all before code review.
-
-CRTX isn't a research project. It's a production tool that we bet our own codebase on every day.
-
----
-
-## Cost
-
-CRTX adds model calls, which cost tokens. Here's what a typical task costs:
-
-| Preset | Est. Cost | Time | Use Case |
-|--------|-----------|------|----------|
-| fast | ~$0.15 | ~1 min | Quick iteration |
-| cheap | ~$0.20 | ~2 min | Budget-conscious |
-| balanced (default) | ~$0.50 | ~4 min | Standard development |
-| thorough | ~$1.00 | ~5 min | Critical features |
-| explore | ~$1.50 | ~4 min | Multi-model parallel |
-| debate | ~$3.00 | ~8 min | Architecture decisions |
-
-At the default Balanced preset and ~15 tasks/week, CRTX costs about **$30/month**. One production bug it catches pays for a year.
-
----
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Architecture](docs/architecture.md) | Core pipeline design, consensus protocol, technology stack |
-| [Model-Agnostic System](docs/model-agnostic.md) | Plugin architecture, LiteLLM adapter, dynamic role assignment |
-| [Arbiter Layer](docs/arbiter.md) | Independent review system, verdicts, feedback injection |
-| [Build Spec](docs/build-spec.md) | MVP scope, day-by-day build plan, technical decisions |
-
----
 
 ## Architecture
 
 ```
-triad/
-├── cli.py                  # Typer + Rich terminal interface
-├── cli_display.py          # Branded UI: logos, config screen, live display, summary
-├── repl.py                 # Interactive REPL with session state
-├── orchestrator.py         # Pipeline engine (sequential, parallel, debate)
-├── planner.py              # Task planner (crtx plan)
-├── providers/              # LiteLLM adapter + model registry
-├── routing/                # Fitness-based model-to-role assignment
-├── arbiter/                # Independent adversarial review engine
-├── consensus/              # Cross-domain suggestions + voting protocol
-├── context/                # AST-aware codebase scanner + context builder
-├── persistence/            # SQLite session storage + export
-├── ci/                     # Multi-model PR review for CI/CD
-├── dashboard/              # Real-time WebSocket visualization (optional)
-├── schemas/                # Pydantic v2 models (all data contracts)
-├── prompts/                # Jinja2 role prompt templates
-├── output/                 # File writer + Markdown report renderer
-└── config/                 # TOML configuration (models, defaults, routing)
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│   Architect  │ ──→ │  Implementer │ ──→ │  Refactorer  │ ──→ │   Verifier   │
+│  (Claude)    │     │  (GPT-4o)    │     │  (Claude)    │     │    (o3)      │
+└──────────────┘     └──────────────┘     └──────────────┘     └──────────────┘
+                                                                       │
+                                                                       ▼
+                                                               ┌──────────────┐
+                                                               │   Arbiter    │
+                                                               │  (Gemini)    │
+                                                               └──────────────┘
+                                                                       │
+                                                              APPROVE / REJECT
 ```
 
----
+The Arbiter always runs on a different model than the generators. Cross-model review catches errors that self-review misses.
+
+## Philosophy
+
+**Evidence over claims.** The Arbiter doesn't trust self-reported confidence. It verifies independently.
+
+**Diversity over consensus.** Multiple models with different training data and different failure modes produce better results than one model reviewing its own work.
+
+**Safety by default.** Apply mode previews before writing. Git branches are protected. Tests run after apply. Rollback is automatic.
+
+**Transparency over magic.** Every routing decision, every token cost, every arbiter verdict is logged and visible. `crtx sessions` shows you exactly what happened and why.
 
 ## Contributing
 
-We welcome contributions! Please read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a PR.
+Contributions are welcome. Fork the repo, create a branch, and submit a PR.
 
-**Important:** All contributors must sign our [Contributor License Agreement](CLA.md) before their first PR can be merged. This is handled automatically via CLA Assistant — you'll be prompted when you open your first PR.
-
----
+The test suite has 1,045 tests — run them with `pytest`. Linting is `ruff check .`.
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE) for details.
+Apache 2.0. See [LICENSE](LICENSE) for details.
 
 ---
 
 <p align="center">
-  <sub>Built by <a href="https://github.com/triad-ai">TriadAI</a></sub>
+  Built by <a href="https://crtx-ai.com">TriadAI</a>
 </p>
