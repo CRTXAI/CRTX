@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="github-social-preview.png" alt="CRTX" width="600">
+  <img src="assets/banner.svg" alt="CRTX" width="800">
 </p>
 
 <p align="center">
