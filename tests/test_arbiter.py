@@ -7,7 +7,11 @@ import pytest
 from triad.arbiter.arbiter import (
     ArbiterEngine,
     _extract_confidence,
+    _extract_field,
+    _extract_section,
     _extract_verdict,
+    _parse_alternatives,
+    _parse_issues,
 )
 from triad.arbiter.feedback import format_arbiter_feedback
 from triad.arbiter.reconciler import ReconciliationEngine
@@ -728,3 +732,306 @@ class TestReconciliationEngine:
                 implementation_summary="summary",
                 verifier_model="only-model",
             )
+
+
+# ── Section / Field Extraction Helpers ────────────────────────────
+
+class TestExtractSection:
+    def test_extracts_issues_section(self):
+        content = "## Verdict\nAPPROVE\n\n## Issues\n\nSome issues here\n\n## Alternatives\n"
+        assert "Some issues here" in _extract_section(content, "Issues")
+
+    def test_extracts_last_section(self):
+        content = "## Issues\n\nStuff\n\n## Alternatives\n\nAlt content here\n"
+        assert "Alt content here" in _extract_section(content, "Alternatives")
+
+    def test_returns_empty_for_missing_section(self):
+        assert _extract_section("## Verdict\nAPPROVE", "Issues") == ""
+
+    def test_case_insensitive(self):
+        content = "## issues\n\nFound stuff\n\n## Alternatives\n"
+        assert "Found stuff" in _extract_section(content, "Issues")
+
+
+class TestExtractField:
+    def test_extracts_plain_field(self):
+        text = "   Location: src/auth.py:42"
+        assert _extract_field(text, "Location") == "src/auth.py:42"
+
+    def test_extracts_bold_field(self):
+        text = "   **Location:** src/auth.py:42"
+        assert _extract_field(text, "Location") == "src/auth.py:42"
+
+    def test_extracts_backtick_value(self):
+        text = "   Location: `src/auth.py:42`"
+        assert _extract_field(text, "Location") == "src/auth.py:42"
+
+    def test_returns_empty_for_missing(self):
+        assert _extract_field("No fields here", "Location") == ""
+
+
+# ── Issue Parsing ─────────────────────────────────────────────────
+
+# A realistic arbiter response for reuse across tests.
+_SAMPLE_RESPONSE = """\
+## Verdict
+
+**VERDICT: REJECT**
+
+## Reasoning
+
+The code has several critical issues that need to be addressed.
+
+## Issues
+
+1. **[critical]** [logic] — Missing error handling for database connection failures
+   Location: src/db.py:connect
+   Evidence: The connect() function has no try/except around the socket call
+   Suggestion: Wrap in try/except and return a meaningful error
+
+2. **[warning]** [security] — API key is logged at INFO level
+   Location: src/auth.py:42-45
+   Evidence: logger.info(f"Using key {api_key}") exposes secrets
+   Suggestion: Log only the last 4 characters of the key
+
+3. **[suggestion]** [performance] — N+1 query in user listing
+   Location: src/users.py:list_users
+   Evidence: Each user triggers a separate query for roles
+   Suggestion: Use a JOIN or prefetch_related
+
+## Alternatives
+
+1. **Alternative**: Use connection pooling instead of per-request connections
+   Rationale: Reduces latency and handles transient failures automatically
+   Confidence: 0.85
+   Code sketch (optional):
+   ```python
+   pool = create_pool(dsn, min_size=5, max_size=20)
+   ```
+
+CONFIDENCE: 0.78
+"""
+
+
+class TestParseIssues:
+    def test_parses_multiple_issues(self):
+        issues = _parse_issues(_SAMPLE_RESPONSE)
+        assert len(issues) == 3
+
+    def test_first_issue_severity(self):
+        issues = _parse_issues(_SAMPLE_RESPONSE)
+        assert issues[0].severity == Severity.CRITICAL
+
+    def test_first_issue_category(self):
+        issues = _parse_issues(_SAMPLE_RESPONSE)
+        assert issues[0].category == IssueCategory.LOGIC
+
+    def test_first_issue_description(self):
+        issues = _parse_issues(_SAMPLE_RESPONSE)
+        assert "Missing error handling" in issues[0].description
+
+    def test_first_issue_location(self):
+        issues = _parse_issues(_SAMPLE_RESPONSE)
+        assert issues[0].location == "src/db.py:connect"
+
+    def test_first_issue_evidence(self):
+        issues = _parse_issues(_SAMPLE_RESPONSE)
+        assert "no try/except" in issues[0].evidence
+
+    def test_first_issue_suggestion(self):
+        issues = _parse_issues(_SAMPLE_RESPONSE)
+        assert "try/except" in issues[0].suggestion
+
+    def test_second_issue_severity(self):
+        issues = _parse_issues(_SAMPLE_RESPONSE)
+        assert issues[1].severity == Severity.WARNING
+
+    def test_second_issue_category(self):
+        issues = _parse_issues(_SAMPLE_RESPONSE)
+        assert issues[1].category == IssueCategory.SECURITY
+
+    def test_third_issue_severity(self):
+        issues = _parse_issues(_SAMPLE_RESPONSE)
+        assert issues[2].severity == Severity.SUGGESTION
+
+    def test_third_issue_category(self):
+        issues = _parse_issues(_SAMPLE_RESPONSE)
+        assert issues[2].category == IssueCategory.PERFORMANCE
+
+    def test_no_issues_section_returns_empty(self):
+        content = "## Verdict\nAPPROVE\n\nCONFIDENCE: 0.95\n"
+        assert _parse_issues(content) == []
+
+    def test_empty_issues_section_returns_empty(self):
+        content = "## Issues\n\n## Alternatives\n"
+        assert _parse_issues(content) == []
+
+    def test_bold_category_markers(self):
+        content = (
+            "## Issues\n\n"
+            "1. **[critical]** **[security]** — SQL injection risk\n"
+            "   Location: api.py:query\n"
+        )
+        issues = _parse_issues(content)
+        assert len(issues) == 1
+        assert issues[0].category == IssueCategory.SECURITY
+
+    def test_uppercase_severity(self):
+        content = (
+            "## Issues\n\n"
+            "1. **[CRITICAL]** [logic] — Off-by-one error\n"
+        )
+        issues = _parse_issues(content)
+        assert len(issues) == 1
+        assert issues[0].severity == Severity.CRITICAL
+
+    def test_en_dash_separator(self):
+        content = (
+            "## Issues\n\n"
+            "1. **[warning]** [pattern] \u2013 Inconsistent naming\n"
+        )
+        issues = _parse_issues(content)
+        assert len(issues) == 1
+        assert "Inconsistent naming" in issues[0].description
+
+    def test_hyphen_separator(self):
+        content = (
+            "## Issues\n\n"
+            "1. **[warning]** [logic] - Wrong return type\n"
+        )
+        issues = _parse_issues(content)
+        assert len(issues) == 1
+        assert "Wrong return type" in issues[0].description
+
+    def test_unrecognised_severity_defaults_to_warning(self):
+        content = (
+            "## Issues\n\n"
+            "1. **[major]** [logic] — Some issue\n"
+        )
+        issues = _parse_issues(content)
+        assert len(issues) == 1
+        assert issues[0].severity == Severity.WARNING
+
+    def test_unrecognised_category_defaults_to_logic(self):
+        content = (
+            "## Issues\n\n"
+            "1. **[critical]** [concurrency] — Race condition\n"
+        )
+        issues = _parse_issues(content)
+        assert len(issues) == 1
+        assert issues[0].category == IssueCategory.LOGIC
+
+    def test_fix_field_as_suggestion(self):
+        content = (
+            "## Issues\n\n"
+            "1. **[warning]** [logic] — Bad comparison\n"
+            "   Fix: Use == instead of is\n"
+        )
+        issues = _parse_issues(content)
+        assert issues[0].suggestion == "Use == instead of is"
+
+    def test_missing_optional_fields(self):
+        content = (
+            "## Issues\n\n"
+            "1. **[critical]** [logic] — Null pointer dereference\n"
+        )
+        issues = _parse_issues(content)
+        assert issues[0].location == ""
+        assert issues[0].evidence == ""
+        assert issues[0].suggestion == ""
+
+
+# ── Alternative Parsing ───────────────────────────────────────────
+
+class TestParseAlternatives:
+    def test_parses_alternative(self):
+        alts = _parse_alternatives(_SAMPLE_RESPONSE)
+        assert len(alts) == 1
+
+    def test_alternative_description(self):
+        alts = _parse_alternatives(_SAMPLE_RESPONSE)
+        assert "connection pooling" in alts[0].description
+
+    def test_alternative_rationale(self):
+        alts = _parse_alternatives(_SAMPLE_RESPONSE)
+        assert "latency" in alts[0].rationale
+
+    def test_alternative_confidence(self):
+        alts = _parse_alternatives(_SAMPLE_RESPONSE)
+        assert alts[0].confidence == 0.85
+
+    def test_alternative_code_sketch(self):
+        alts = _parse_alternatives(_SAMPLE_RESPONSE)
+        assert "create_pool" in alts[0].code_sketch
+
+    def test_no_alternatives_section_returns_empty(self):
+        content = "## Issues\n\n1. **[critical]** [logic] — Bug\n"
+        assert _parse_alternatives(content) == []
+
+    def test_alternative_without_code_sketch(self):
+        content = (
+            "## Alternatives\n\n"
+            "1. **Alternative**: Use Redis caching\n"
+            "   Rationale: Faster lookups\n"
+            "   Confidence: 0.70\n"
+        )
+        alts = _parse_alternatives(content)
+        assert len(alts) == 1
+        assert alts[0].code_sketch == ""
+        assert alts[0].confidence == 0.70
+
+    def test_alternative_default_confidence(self):
+        content = (
+            "## Alternatives\n\n"
+            "1. **Alternative**: Try something else\n"
+            "   Rationale: Might work\n"
+        )
+        alts = _parse_alternatives(content)
+        assert alts[0].confidence == 0.5
+
+
+# ── Integration: review() populates issues ────────────────────────
+
+class TestArbiterEngineParseIntegration:
+    async def test_review_populates_issues_and_alternatives(self):
+        mock_cls, _ = _mock_arbiter_provider(_SAMPLE_RESPONSE)
+        registry = _make_two_model_registry()
+        config = PipelineConfig()
+        engine = ArbiterEngine(config, registry)
+
+        with patch(_ARBITER_PROVIDER, mock_cls):
+            review = await engine.review(
+                stage=PipelineStage.IMPLEMENT,
+                stage_model="model-a-v1",
+                stage_output="def foo(): pass",
+                task=_make_task(),
+            )
+
+        assert review.verdict == Verdict.REJECT
+        assert review.confidence == 0.78
+        assert len(review.issues) == 3
+        assert review.issues[0].severity == Severity.CRITICAL
+        assert review.issues[1].severity == Severity.WARNING
+        assert review.issues[2].severity == Severity.SUGGESTION
+        assert len(review.alternatives) == 1
+        assert "connection pooling" in review.alternatives[0].description
+
+    async def test_review_with_no_issues_section(self):
+        mock_cls, _ = _mock_arbiter_provider(
+            "All good.\n\nVERDICT: APPROVE\nCONFIDENCE: 0.95"
+        )
+        registry = _make_two_model_registry()
+        config = PipelineConfig()
+        engine = ArbiterEngine(config, registry)
+
+        with patch(_ARBITER_PROVIDER, mock_cls):
+            review = await engine.review(
+                stage=PipelineStage.ARCHITECT,
+                stage_model="model-a-v1",
+                stage_output="scaffold",
+                task=_make_task(),
+            )
+
+        assert review.verdict == Verdict.APPROVE
+        assert review.issues == []
+        assert review.alternatives == []

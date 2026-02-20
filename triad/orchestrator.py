@@ -1436,7 +1436,11 @@ class ParallelOrchestrator:
 
         Retries once with a fallback model from the full registry if the
         primary call fails with a transient error.
+
+        Pass ``max_tokens=<int>`` alongside template vars to override the
+        model's default max output tokens for this call.
         """
+        call_max_tokens: int | None = template_vars.pop("max_tokens", None)
         tpl_vars: dict = {
             "task": self._task.task,
             "context": self._task.context,
@@ -1483,6 +1487,7 @@ class ParallelOrchestrator:
                     }],
                     system=system,
                     timeout=timeout,
+                    max_tokens=call_max_tokens,
                 )
                 msg.from_agent = PipelineStage.ARCHITECT
                 msg.to_agent = PipelineStage.ARCHITECT
@@ -1709,6 +1714,7 @@ class DebateOrchestrator:
             proposals=proposals,
             all_rebuttals=rebuttals,
             final_arguments=final_arguments,
+            max_tokens=judge_cfg.max_output_tokens,
         )
         all_messages.append(judge_msg)
         judgment = judge_msg.content
@@ -1860,7 +1866,11 @@ class DebateOrchestrator:
 
         Retries once with a fallback model from the full registry if the
         primary call fails with a transient error.
+
+        Pass ``max_tokens=<int>`` alongside template vars to override the
+        model's default max output tokens for this call.
         """
+        call_max_tokens: int | None = template_vars.pop("max_tokens", None)
         tpl_vars: dict = {
             "task": self._task.task,
             "context": self._task.context,
@@ -1896,6 +1906,13 @@ class DebateOrchestrator:
             tried.append(key)
             try:
                 provider = LiteLLMProvider(cfg)
+                logger.debug(
+                    "Debate call: template=%s, model=%s (%s), "
+                    "max_tokens=%s, cfg.max_output_tokens=%s, system_len=%d",
+                    template_name, key, cfg.model,
+                    call_max_tokens, cfg.max_output_tokens,
+                    len(system),
+                )
                 msg = await provider.complete(
                     messages=[{
                         "role": "user",
@@ -1906,6 +1923,14 @@ class DebateOrchestrator:
                     }],
                     system=system,
                     timeout=timeout,
+                    max_tokens=call_max_tokens,
+                )
+                logger.debug(
+                    "Debate call returned: template=%s, model=%s, "
+                    "content_len=%d, prompt_tok=%s, completion_tok=%s",
+                    template_name, key, len(msg.content),
+                    msg.token_usage.prompt_tokens if msg.token_usage else "?",
+                    msg.token_usage.completion_tokens if msg.token_usage else "?",
                 )
                 msg.from_agent = PipelineStage.ARCHITECT
                 msg.to_agent = PipelineStage.ARCHITECT
@@ -2190,6 +2215,7 @@ class ReviewOrchestrator:
         **template_vars: object,
     ) -> AgentMessage:
         """Call a model with a rendered prompt template."""
+        call_max_tokens: int | None = template_vars.pop("max_tokens", None)
         tpl_vars: dict = {
             "task": self._task.task,
             "context": self._task.context,
@@ -2232,6 +2258,7 @@ class ReviewOrchestrator:
                     }],
                     system=system,
                     timeout=timeout,
+                    max_tokens=call_max_tokens,
                 )
                 msg.from_agent = PipelineStage.ARCHITECT
                 msg.to_agent = PipelineStage.ARCHITECT
@@ -2649,6 +2676,7 @@ class ImproveOrchestrator:
         **template_vars: object,
     ) -> AgentMessage:
         """Call a model with a rendered prompt template."""
+        call_max_tokens: int | None = template_vars.pop("max_tokens", None)
         tpl_vars: dict = {
             "task": self._task.task,
             "context": self._task.context,
@@ -2694,6 +2722,7 @@ class ImproveOrchestrator:
                     }],
                     system=system,
                     timeout=timeout,
+                    max_tokens=call_max_tokens,
                 )
                 msg.from_agent = PipelineStage.ARCHITECT
                 msg.to_agent = PipelineStage.ARCHITECT

@@ -13,11 +13,31 @@ from pathlib import Path
 from triad.output.renderer import _display_name_from_litellm_id, render_summary
 from triad.schemas.pipeline import PipelineResult
 
-# Regex to match code blocks with optional file hints
-# Matches: ```language\n# file: path/to/file.py\n...```
+# Regex to match fenced code blocks with optional file hints.
+# Handles both formats:
+#   # file: path.py          ← header BEFORE the code block
+#   ```python
+#   code
+#   ```
+# and:
+#   ```python
+#   # file: path.py          ← header INSIDE the code block
+#   code
+#   ```
 _CODE_BLOCK_RE = re.compile(
-    r"```(\w+)\n(?:#\s*file:\s*(.+?)\n)?(.*?)```",
+    r"(?:#\s*file:\s*(.+?)\n\s*)?"      # (1) optional # file: before the block
+    r"```(\w*)\n"                         # (2) opening ``` with optional language
+    r"(?:#\s*file:\s*(.+?)\n)?"           # (3) optional # file: inside the block
+    r"(.*?)"                              # (4) code content
+    r"```",                               # closing ```
     re.DOTALL,
+)
+
+# Standalone # file: header lines — used as a last-resort splitter when
+# the model outputs raw code without any triple-backtick fences.
+_FILE_HEADER_LINE_RE = re.compile(
+    r"^#\s*file:\s*(.+?)$",
+    re.MULTILINE,
 )
 
 
@@ -137,18 +157,20 @@ def _extract_code_files(
 
     file_counter = 0
     for match in _CODE_BLOCK_RE.finditer(final_content):
-        language = match.group(1)
-        filepath_hint = match.group(2)
-        code = match.group(3).strip()
+        filepath_before = match.group(1)   # # file: before the block
+        language = match.group(2) or ""     # language (may be empty)
+        filepath_inside = match.group(3)    # # file: inside the block
+        code = match.group(4).strip()       # code content
 
         if not code:
             continue
 
+        filepath_hint = filepath_before or filepath_inside
         if filepath_hint:
             rel_path = _sanitise_filepath(filepath_hint.strip())
         else:
             file_counter += 1
-            ext = _language_extension(language)
+            ext = _language_extension(language) if language else ".txt"
             rel_path = f"output_{file_counter}{ext}"
 
         # Skip files already written by the first pass (code_blocks)
@@ -159,6 +181,57 @@ def _extract_code_files(
         file_path = target / rel_path
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(code, encoding="utf-8")
+        written.add(rel_path)
+
+    # Fallback: if no fenced code blocks were found, try splitting on
+    # standalone # file: header lines (handles models that output raw
+    # code without triple-backtick fences).
+    if not written:
+        _extract_file_sections(final_content, code_dir, tests_dir, written)
+
+
+def _extract_file_sections(
+    content: str,
+    code_dir: Path,
+    tests_dir: Path,
+    written: set[str],
+) -> None:
+    """Extract code from ``# file:`` sections when no fenced blocks exist.
+
+    Splits content on ``# file: path`` header lines and writes the text
+    between consecutive headers as individual files. Strips any stray
+    triple-backtick fences that may wrap the code.
+    """
+    headers = list(_FILE_HEADER_LINE_RE.finditer(content))
+    if not headers:
+        return
+
+    for i, header_match in enumerate(headers):
+        filepath = header_match.group(1).strip()
+        start = header_match.end()
+        end = headers[i + 1].start() if i + 1 < len(headers) else len(content)
+        code = content[start:end].strip()
+
+        if not code:
+            continue
+
+        # Strip leading/trailing fences in case the code is partially fenced
+        code = re.sub(r"^```\w*\n?", "", code)
+        code = re.sub(r"\n?```\s*$", "", code)
+        code = code.strip()
+
+        if not code:
+            continue
+
+        rel_path = _sanitise_filepath(filepath)
+        if rel_path in written:
+            continue
+
+        target = tests_dir if "test" in rel_path.lower() else code_dir
+        file_path = target / rel_path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(code, encoding="utf-8")
+        written.add(rel_path)
 
 
 def _sanitise_filepath(raw: str) -> str:

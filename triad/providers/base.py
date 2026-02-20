@@ -104,6 +104,7 @@ class ModelProvider(ABC):
         *,
         output_schema: type[BaseModel] | None = None,
         timeout: int = 120,
+        max_tokens: int | None = None,
     ) -> AgentMessage:
         """Send a completion request and return a structured AgentMessage.
 
@@ -120,6 +121,9 @@ class ModelProvider(ABC):
                            doesn't support structured output or parsing fails,
                            fall back to text extraction.
             timeout: Timeout in seconds for the model call.
+            max_tokens: Override for the maximum number of output tokens.
+                        When None, uses the model's configured
+                        max_output_tokens.
 
         Returns:
             An AgentMessage with content, code_blocks, token_usage, and model
@@ -136,6 +140,7 @@ class ModelProvider(ABC):
         system: str,
         *,
         timeout: int = 120,
+        max_tokens: int | None = None,
         on_chunk: object | None = None,
     ) -> AgentMessage:
         """Send a streaming completion request.
@@ -147,12 +152,15 @@ class ModelProvider(ABC):
             messages: Conversation messages in OpenAI format.
             system: System prompt for this call.
             timeout: Timeout in seconds.
+            max_tokens: Override for the maximum number of output tokens.
             on_chunk: Optional callback invoked with each StreamChunk.
 
         Returns:
             An AgentMessage with the full accumulated response.
         """
-        return await self.complete(messages, system, timeout=timeout)
+        return await self.complete(
+            messages, system, timeout=timeout, max_tokens=max_tokens,
+        )
 
     def calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
         """Calculate the USD cost for a given token count.

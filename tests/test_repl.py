@@ -201,100 +201,84 @@ class TestREPLLoop:
 # ── Welcome Dashboard ───────────────────────────────────────────
 
 
-class TestStatusDashboard:
+class TestWelcomeScreen:
     @patch("triad.repl.console")
-    def test_dashboard_prints_without_error(self, mock_console):
-        """Status dashboard renders without raising."""
+    def test_welcome_prints_without_error(self, mock_console):
+        """Welcome screen renders without raising."""
         repl = TriadREPL()
-        repl._print_status_dashboard()
-        # console.print was called at least once (the Panel)
+        repl._print_welcome()
         assert mock_console.print.called
 
     @patch("triad.repl.console")
-    def test_quick_start_prints_without_error(self, mock_console):
-        """Quick start hints render without raising."""
+    def test_welcome_shows_providers(self, mock_console):
+        """Welcome screen output includes provider names."""
         repl = TriadREPL()
-        repl._print_quick_start()
-        assert mock_console.print.called
+        repl._provider_health["ANTHROPIC_API_KEY"] = ("ok", "Connected")
+        repl._print_welcome()
+        printed = " ".join(
+            str(arg) for call in mock_console.print.call_args_list
+            for arg in call[0]
+        )
+        assert "Anthropic" in printed
 
     @patch("triad.repl.console")
-    def test_dashboard_shows_providers(self, mock_console):
-        """Dashboard output includes provider names."""
-        from rich.panel import Panel
-
-        repl = TriadREPL()
-        repl._print_status_dashboard()
-        # Find the Panel passed to console.print
-        for call in mock_console.print.call_args_list:
-            for arg in call[0]:
-                if isinstance(arg, Panel):
-                    # Panel.renderable is the Text body
-                    body_text = arg.renderable.plain
-                    assert "Providers" in body_text or "Providers" in str(arg.title)
-                    return
-        raise AssertionError("No Panel found in console.print calls")
-
-    @patch("triad.repl.console")
-    def test_dashboard_shows_defaults(self, mock_console):
-        """Dashboard shows current defaults."""
-        from rich.panel import Panel
-
+    def test_welcome_shows_defaults(self, mock_console):
+        """Welcome screen shows current session defaults."""
         repl = TriadREPL()
         repl.mode = "parallel"
         repl.arbiter = "full"
         repl.route = "quality_first"
-        repl._print_status_dashboard()
-        for call in mock_console.print.call_args_list:
-            for arg in call[0]:
-                if isinstance(arg, Panel):
-                    body = arg.renderable.plain
-                    assert "parallel" in body
-                    assert "full" in body
-                    assert "quality_first" in body
-                    return
-        raise AssertionError("No Panel found")
+        repl._print_welcome()
+        printed = " ".join(
+            str(arg) for call in mock_console.print.call_args_list
+            for arg in call[0]
+        )
+        assert "parallel" in printed
+        assert "full" in printed
+        assert "quality_first" in printed
 
     @patch("triad.repl.console")
-    def test_dashboard_detects_configured_key(self, mock_console):
-        """Dashboard shows checkmark for a provider marked 'ok' in cache."""
-        from rich.panel import Panel
-
+    def test_welcome_shows_ok_provider_dot(self, mock_console):
+        """Welcome screen shows filled dot for a healthy provider."""
         repl = TriadREPL()
         repl._provider_health["ANTHROPIC_API_KEY"] = ("ok", "Connected")
-        repl._print_status_dashboard()
-        for call in mock_console.print.call_args_list:
-            for arg in call[0]:
-                if isinstance(arg, Panel):
-                    body = arg.renderable.plain
-                    assert "✓" in body
-                    return
-        raise AssertionError("No Panel found")
+        repl._print_welcome()
+        printed = " ".join(
+            str(arg) for call in mock_console.print.call_args_list
+            for arg in call[0]
+        )
+        assert "●" in printed
 
     @patch("triad.repl.console")
-    def test_dashboard_shows_degraded_provider(self, mock_console):
-        """Dashboard shows warning icon for a rate-limited provider."""
-        from rich.panel import Panel
-
+    def test_welcome_shows_empty_dot_for_unconfigured(self, mock_console):
+        """Welcome screen shows empty dot for unconfigured provider."""
         repl = TriadREPL()
-        repl._provider_health["GEMINI_API_KEY"] = ("degraded", "quota")
-        repl._print_status_dashboard()
-        for call in mock_console.print.call_args_list:
-            for arg in call[0]:
-                if isinstance(arg, Panel):
-                    body = arg.renderable.plain
-                    assert "\u26a0" in body  # ⚠
-                    assert "quota" in body
-                    return
-        raise AssertionError("No Panel found")
+        repl._print_welcome()
+        printed = " ".join(
+            str(arg) for call in mock_console.print.call_args_list
+            for arg in call[0]
+        )
+        assert "○" in printed
 
     @patch("triad.repl.console")
-    def test_run_calls_dashboard(self, mock_console):
-        """run() calls _check_providers and _print_status_dashboard before entering loop."""
+    def test_welcome_shows_quick_start_tips(self, mock_console):
+        """Welcome screen includes quick start tips."""
+        repl = TriadREPL()
+        repl._print_welcome()
+        printed = " ".join(
+            str(arg) for call in mock_console.print.call_args_list
+            for arg in call[0]
+        )
+        assert "demo" in printed
+        assert "help" in printed
+
+    @patch("triad.repl.console")
+    def test_run_calls_welcome(self, mock_console):
+        """run() calls _check_providers and _print_welcome before entering loop."""
         mock_console.input.side_effect = KeyboardInterrupt
         repl = TriadREPL()
         with patch.object(repl, "_check_providers") as mock_check:
-            with patch.object(repl, "_print_status_dashboard") as mock_dash:
-                with patch.object(repl, "_print_quick_start"):
-                    repl.run()
-                mock_check.assert_called_once()
-                mock_dash.assert_called_once()
+            with patch.object(repl, "_print_welcome") as mock_welcome:
+                repl.run()
+            mock_check.assert_called_once()
+            mock_welcome.assert_called_once()

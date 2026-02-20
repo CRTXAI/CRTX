@@ -9,7 +9,12 @@ from __future__ import annotations
 
 import logging
 
-from triad.arbiter.arbiter import _extract_confidence, _extract_verdict
+from triad.arbiter.arbiter import (
+    _extract_confidence,
+    _extract_verdict,
+    _parse_alternatives,
+    _parse_issues,
+)
 from triad.prompts import render_prompt
 from triad.providers.litellm_provider import LiteLLMProvider
 from triad.schemas.arbiter import ArbiterReview
@@ -85,12 +90,17 @@ class ReconciliationEngine:
         cost = msg.token_usage.cost if msg.token_usage else 0.0
         verdict = _extract_verdict(msg.content)
         confidence = _extract_confidence(msg.content)
+        issues = _parse_issues(msg.content)
+        alternatives = _parse_alternatives(msg.content)
 
         logger.info(
-            "Reconciliation verdict: %s (model=%s, confidence=%.2f)",
+            "Reconciliation verdict: %s (model=%s, confidence=%.2f, "
+            "issues=%d, alternatives=%d)",
             verdict.value,
             recon_config.model,
             confidence,
+            len(issues),
+            len(alternatives),
         )
 
         return ArbiterReview(
@@ -98,6 +108,8 @@ class ReconciliationEngine:
             reviewed_model=verifier_model,
             arbiter_model=recon_config.model,
             verdict=verdict,
+            issues=issues,
+            alternatives=alternatives,
             confidence=confidence,
             reasoning=msg.content,
             token_cost=cost,

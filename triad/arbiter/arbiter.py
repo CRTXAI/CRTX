@@ -12,7 +12,14 @@ import re
 
 from triad.prompts import render_prompt
 from triad.providers.litellm_provider import LiteLLMProvider
-from triad.schemas.arbiter import ArbiterReview, Verdict
+from triad.schemas.arbiter import (
+    Alternative,
+    ArbiterReview,
+    Issue,
+    IssueCategory,
+    Severity,
+    Verdict,
+)
 from triad.schemas.messages import PipelineStage
 from triad.schemas.pipeline import ModelConfig, PipelineConfig, TaskSpec
 
@@ -21,6 +28,11 @@ logger = logging.getLogger(__name__)
 # Minimum confidence for an APPROVE verdict to be accepted as-is.
 # Below this threshold, APPROVE is downgraded to FLAG.
 _MIN_APPROVE_CONFIDENCE = 0.50
+
+# Minimum response length to consider an arbiter response valid.
+# Responses shorter than this trigger a fallback to the next model.
+# The 0-issues fallback (below) catches longer but malformed responses.
+_MIN_RESPONSE_LENGTH = 10
 
 # Regex for extracting VERDICT: <value> from arbiter output
 _VERDICT_RE = re.compile(
@@ -86,13 +98,26 @@ class ArbiterEngine:
         if exclude_models:
             excluded_model_ids.update(exclude_models)
 
+        # Last-resort review: if all fallback models also produce hollow
+        # verdicts (FLAG/REJECT with 0 parsed issues), return the first
+        # one rather than None.  Empty responses are never saved here.
+        hollow_review: ArbiterReview | None = None
+
         while True:
             try:
                 arbiter_key = self._resolve_arbiter_model(
                     excluded_model_ids, exclude=tried_keys,
                 )
             except RuntimeError:
-                # No arbiter model available — degrade gracefully
+                # No more arbiter models — return the hollow review if
+                # we captured one, otherwise degrade gracefully.
+                if hollow_review is not None:
+                    logger.warning(
+                        "All arbiter models returned hollow verdicts for %s, "
+                        "using first result",
+                        stage.value,
+                    )
+                    return hollow_review
                 logger.warning(
                     "No arbiter models available for %s, skipping review",
                     stage.value,
@@ -118,6 +143,11 @@ class ArbiterEngine:
                     ),
                 )
 
+                logger.debug(
+                    "Arbiter prompt for %s: %d chars, stage_output: %d chars",
+                    stage.value, len(system), len(stage_output),
+                )
+
                 timeout = self._config.default_timeout
                 msg = await provider.complete(
                     messages=[{
@@ -131,17 +161,65 @@ class ArbiterEngine:
                     timeout=timeout,
                 )
 
+                logger.debug(
+                    "Arbiter raw response for %s: %d chars",
+                    stage.value, len(msg.content),
+                )
+
+                # Empty / too-short response — try fallback model.
+                # Don't save as hollow_review; empty responses are useless.
+                if len(msg.content.strip()) < _MIN_RESPONSE_LENGTH:
+                    logger.warning(
+                        "Arbiter model %s returned near-empty response for %s "
+                        "(%d chars) — trying fallback",
+                        arbiter_key, stage.value, len(msg.content),
+                    )
+                    if self._health:
+                        self._health.mark_unhealthy(arbiter_key)
+                    continue
+
                 cost = msg.token_usage.cost if msg.token_usage else 0.0
                 verdict = _extract_verdict(msg.content)
                 confidence = _extract_confidence(msg.content)
+                issues = _parse_issues(msg.content)
+                alternatives = _parse_alternatives(msg.content)
 
                 logger.info(
-                    "Arbiter verdict for %s: %s (arbiter=%s, confidence=%.2f)",
+                    "Arbiter verdict for %s: %s (arbiter=%s, confidence=%.2f, "
+                    "issues=%d, alternatives=%d)",
                     stage.value,
                     verdict.value,
                     arbiter_config.model,
                     confidence,
+                    len(issues),
+                    len(alternatives),
                 )
+
+                review = ArbiterReview(
+                    stage_reviewed=stage,
+                    reviewed_model=stage_model,
+                    arbiter_model=arbiter_config.model,
+                    verdict=verdict,
+                    issues=issues,
+                    alternatives=alternatives,
+                    confidence=confidence,
+                    reasoning=msg.content,
+                    token_cost=cost,
+                )
+
+                # FLAG/REJECT with 0 parsed issues — response is likely
+                # malformed or the model didn't follow the prompt format.
+                # Try a fallback model, but save this as last resort.
+                if not issues and verdict in (Verdict.FLAG, Verdict.REJECT):
+                    logger.warning(
+                        "Arbiter %s returned %s for %s but parsed 0 issues "
+                        "(%d chars) — trying fallback",
+                        arbiter_key, verdict.value, stage.value,
+                        len(msg.content),
+                    )
+                    if hollow_review is None:
+                        hollow_review = review
+                    continue
 
                 # Downgrade low-confidence APPROVE to FLAG
                 if (
@@ -153,17 +231,11 @@ class ArbiterEngine:
                         "treating as FLAG",
                         stage.value, confidence,
                     )
-                    verdict = Verdict.FLAG
+                    review = review.model_copy(
+                        update={"verdict": Verdict.FLAG},
+                    )
 
-                return ArbiterReview(
-                    stage_reviewed=stage,
-                    reviewed_model=stage_model,
-                    arbiter_model=arbiter_config.model,
-                    verdict=verdict,
-                    confidence=confidence,
-                    reasoning=msg.content,
-                    token_cost=cost,
-                )
+                return review
             except (RuntimeError, TimeoutError) as e:
                 logger.warning(
                     "Arbiter model %s failed for %s: %s — trying fallback",
@@ -250,3 +322,146 @@ def _extract_confidence(content: str) -> float:
         except ValueError:
             pass
     return 0.5
+
+
+# ── Structured issue / alternative parsers ─────────────────────────
+
+# Matches the first line of a numbered issue entry.
+# Captures: (severity, category, description)
+# Handles variations like:
+#   1. **[critical]** [logic] — Missing error handling
+#   2. **[WARNING]** **[security]** - API key exposed
+_ISSUE_LINE_RE = re.compile(
+    r"(?:\d+\.|[-*])\s*"               # numbered "1." or bullet "-"/"*"
+    r"\*?\*?\[(\w+)\]\*?\*?\s*"         # [severity], optionally bold
+    r"\*?\*?\[(\w+)\]\*?\*?\s*"         # [category], optionally bold
+    r"[—–\-:]\s*"                       # separator (em-dash, en-dash, hyphen, colon)
+    r"(.+)",                            # description (rest of line)
+    re.IGNORECASE,
+)
+
+# Maps recognised severity strings to the enum.
+_SEVERITY_MAP: dict[str, Severity] = {s.value: s for s in Severity}
+
+# Maps recognised category strings to the enum.
+_CATEGORY_MAP: dict[str, IssueCategory] = {c.value: c for c in IssueCategory}
+
+
+def _parse_issues(content: str) -> list[Issue]:
+    """Parse structured issues from the ``## Issues`` section.
+
+    Robust to common LLM formatting variations (bold markers, mixed
+    dashes, missing optional fields).  Returns an empty list when the
+    section is absent or contains no parseable entries.
+    """
+    section = _extract_section(content, "Issues")
+    if not section:
+        return []
+
+    items = _split_entries(section)
+    parsed: list[Issue] = []
+
+    for item in items:
+        match = _ISSUE_LINE_RE.match(item.strip())
+        if not match:
+            continue
+
+        severity_str = match.group(1).lower()
+        category_str = match.group(2).lower()
+        description = match.group(3).strip()
+
+        severity = _SEVERITY_MAP.get(severity_str, Severity.WARNING)
+        category = _CATEGORY_MAP.get(category_str, IssueCategory.LOGIC)
+
+        location = _extract_field(item, "Location")
+        evidence = _extract_field(item, "Evidence")
+        suggestion = (
+            _extract_field(item, "Suggestion")
+            or _extract_field(item, "Fix")
+        )
+
+        parsed.append(Issue(
+            severity=severity,
+            category=category,
+            location=location,
+            description=description,
+            suggestion=suggestion,
+            evidence=evidence,
+        ))
+
+    return parsed
+
+
+def _parse_alternatives(content: str) -> list[Alternative]:
+    """Parse suggested alternatives from the ``## Alternatives`` section."""
+    section = _extract_section(content, "Alternatives")
+    if not section:
+        return []
+
+    items = _split_entries(section)
+    parsed: list[Alternative] = []
+
+    for item in items:
+        # Match: 1. **Alternative**: description   or   - **Alternative**: desc
+        desc_match = re.match(
+            r"(?:\d+\.|[-*])\s*\*?\*?Alternative\*?\*?:\s*(.+?)$",
+            item.strip(),
+            re.IGNORECASE | re.MULTILINE,
+        )
+        if not desc_match:
+            continue
+
+        description = desc_match.group(1).strip()
+        rationale = _extract_field(item, "Rationale")
+
+        confidence_match = re.search(
+            r"Confidence:\s*([\d.]+)", item, re.IGNORECASE,
+        )
+        confidence = 0.5
+        if confidence_match:
+            try:
+                confidence = max(0.0, min(1.0, float(confidence_match.group(1))))
+            except ValueError:
+                pass
+
+        code_match = re.search(r"```\w*\n(.*?)```", item, re.DOTALL)
+        code_sketch = code_match.group(1).strip() if code_match else ""
+
+        parsed.append(Alternative(
+            description=description,
+            rationale=rationale or "",
+            code_sketch=code_sketch,
+            confidence=confidence,
+        ))
+
+    return parsed
+
+
+def _extract_section(content: str, heading: str) -> str:
+    """Extract text between ``## <heading>`` and the next ``## `` or end."""
+    pattern = re.compile(
+        rf"##\s*{re.escape(heading)}\s*\n(.*?)(?=\n##\s|\Z)",
+        re.DOTALL | re.IGNORECASE,
+    )
+    match = pattern.search(content)
+    return match.group(1) if match else ""
+
+
+def _split_entries(section: str) -> list[str]:
+    """Split a section into individual numbered or bulleted entries."""
+    parts = re.split(r"\n(?=\d+\.\s|[-*]\s\*?\*?\[)", section)
+    return [p for p in parts if p.strip()]
+
+
+def _extract_field(text: str, field_name: str) -> str:
+    """Extract a ``Field: value`` line from an entry block.
+
+    Handles optional bold markers (both ``**Field:** val`` and
+    ``**Field**: val``) and backtick-wrapped values.
+    """
+    match = re.search(
+        rf"^\s*\*{{0,2}}{field_name}\*{{0,2}}:\*{{0,2}}\s*`?(.+?)`?\s*$",
+        text,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    return match.group(1).strip() if match else ""

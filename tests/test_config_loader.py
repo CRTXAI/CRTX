@@ -198,8 +198,8 @@ class TestGetBestModelForRole:
     def test_best_verifier(self):
         registry = load_models(_CONFIG_DIR / "models.toml")
         best = get_best_model_for_role(registry, PipelineStage.VERIFY)
-        # Claude Opus has verifier=0.90, highest
-        assert best == "claude-opus"
+        # Grok 4 has verifier=0.92, highest
+        assert best == "grok-4"
 
     def test_empty_registry(self):
         result = get_best_model_for_role({}, PipelineStage.ARCHITECT)

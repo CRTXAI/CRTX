@@ -2,6 +2,16 @@
 
 All notable changes to CRTX will be documented in this file.
 
+## [0.1.1] - 2026-02-19
+
+### Fixed
+
+- **Arbiter parser** now extracts structured issues and alternatives from reviews (was returning empty lists despite model output containing them)
+- **Debate judge prompt** reframed to produce code, not essays — output is 90%+ code with `# file:` headers instead of comparative analysis
+- **max_output_tokens** now explicitly set per model in `models.toml` (was silently defaulting to ~4K via LiteLLM, truncating large outputs)
+- **Arbiter model selection** uses `verifier_fitness` tiebreaker and falls back through remaining models on empty/malformed responses
+- **File extractor** handles `# file:` headers outside fenced code blocks and unfenced raw code sections (debate judge output was producing code that the extractor couldn't find)
+
 ## [0.1.0] - 2026-02-18
 
 ### Initial Release

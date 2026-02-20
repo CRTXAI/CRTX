@@ -38,12 +38,12 @@ VERSION = "0.1.0"
 
 # Full logo — triangle + CRTX block letters
 FULL_LOGO = r"""
-        ◆                ▄▀▀▀▄ █▀▀▀▄ ▀▀▀█▀▀▀ █   █
-       ╱ ╲               █     █   █    █    ▀▄ ▄▀
-      ╱   ╲              █     █▀▀█▀    █      █
-     ╱  ◈  ╲             ▀▄▄▄▀ █  ▀▄   █    ▄▀ ▀▄
-    ╱       ╲
-   ◆─────────◆
+       ◆              ██████╗ ██████╗ ████████╗██╗  ██╗
+      ╱ ╲             ██╔═══╝ ██╔══██╗╚══██╔══╝╚██╗██╔╝
+     ╱   ╲            ██║     ██████╔╝   ██║    ╚███╔╝
+    ╱  ◈  ╲           ██║     ██╔══██╗   ██║    ██╔██╗
+   ╱       ╲          ╚██████╗██║  ██║   ██║   ██╔╝ ██╗
+  ◆─────────◆          ╚═════╝╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝
 """
 
 COMPACT_LOGO_TEMPLATE = """\
@@ -67,9 +67,9 @@ def render_full_logo(console: Console) -> None:
         # Color the triangle nodes
         for ch in left:
             if ch == "◆":
-                text.append(ch, style=BRAND["mint"])
+                text.append(ch, style=f"bold {BRAND['mint']}")
             elif ch == "◈":
-                text.append(ch, style=BRAND["gold"])
+                text.append(ch, style=f"bold {BRAND['gold']}")
             elif ch in ("╱", "╲", "─"):
                 text.append(ch, style=BRAND["emerald"])
             else:
@@ -77,7 +77,7 @@ def render_full_logo(console: Console) -> None:
 
         # Block letters in green
         if right:
-            text.append(right, style=BRAND["green"])
+            text.append(right, style=f"bold {BRAND['green']}")
 
         console.print(text)
 

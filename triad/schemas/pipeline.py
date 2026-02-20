@@ -82,6 +82,10 @@ class ModelConfig(BaseModel):
     api_key_env: str = Field(description="Environment variable name holding the API key")
     api_base: str = Field(default="", description="Custom API base URL (empty = provider default)")
     context_window: int = Field(gt=0, description="Maximum context window size in tokens")
+    max_output_tokens: int = Field(
+        default=16384, gt=0,
+        description="Maximum output tokens per completion (passed as max_tokens to the provider)",
+    )
     supports_tools: bool = Field(default=False, description="Whether the model supports tool use")
     supports_structured: bool = Field(
         default=False, description="Whether the model supports structured output"

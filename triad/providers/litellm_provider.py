@@ -94,6 +94,7 @@ class LiteLLMProvider(ModelProvider):
         *,
         output_schema: type[BaseModel] | None = None,
         timeout: int = 120,
+        max_tokens: int | None = None,
     ) -> AgentMessage:
         """Send a completion request via LiteLLM and return an AgentMessage.
 
@@ -105,6 +106,9 @@ class LiteLLMProvider(ModelProvider):
             system: System prompt for this call.
             output_schema: Optional Pydantic model for structured output.
             timeout: Timeout in seconds for the model call.
+            max_tokens: Override for the maximum number of output tokens.
+                        When None, uses the model's configured
+                        max_output_tokens.
 
         Returns:
             AgentMessage populated with content, code_blocks, token_usage.
@@ -117,10 +121,35 @@ class LiteLLMProvider(ModelProvider):
         full_messages = [{"role": "system", "content": system}, *messages]
 
         # Build kwargs for litellm.acompletion
-        kwargs = self._build_completion_kwargs(full_messages, output_schema, timeout)
+        kwargs = self._build_completion_kwargs(
+            full_messages, output_schema, timeout, max_tokens=max_tokens,
+        )
 
         # Call with retry
         response = await self._call_with_retry(kwargs)
+
+        # Log response metadata for debugging truncation issues
+        finish_reason = None
+        if response.choices:
+            finish_reason = getattr(response.choices[0], "finish_reason", None)
+        usage = getattr(response, "usage", None)
+        resp_prompt_tokens = getattr(usage, "prompt_tokens", "?") if usage else "?"
+        resp_completion_tokens = getattr(usage, "completion_tokens", "?") if usage else "?"
+        logger.debug(
+            "Response metadata: model=%s, finish_reason=%s, "
+            "prompt_tokens=%s, completion_tokens=%s, "
+            "requested_max_tokens=%s",
+            self._config.model, finish_reason,
+            resp_prompt_tokens, resp_completion_tokens,
+            kwargs.get("max_tokens"),
+        )
+        if finish_reason == "length":
+            logger.debug(
+                "Output truncated: %s hit max_tokens limit "
+                "(requested=%s, used=%s completion tokens)",
+                self._config.model,
+                kwargs.get("max_tokens"), resp_completion_tokens,
+            )
 
         # Extract content from response
         content = self._extract_content(response)
@@ -152,6 +181,7 @@ class LiteLLMProvider(ModelProvider):
         system: str,
         *,
         timeout: int = 120,
+        max_tokens: int | None = None,
         on_chunk: object | None = None,
     ) -> AgentMessage:
         """Send a streaming completion request via LiteLLM.
@@ -163,13 +193,16 @@ class LiteLLMProvider(ModelProvider):
             messages: Conversation messages in OpenAI format.
             system: System prompt for this call.
             timeout: Timeout in seconds.
+            max_tokens: Override for the maximum number of output tokens.
             on_chunk: Optional callback invoked with each StreamChunk.
 
         Returns:
             AgentMessage with the full accumulated response.
         """
         full_messages = [{"role": "system", "content": system}, *messages]
-        kwargs = self._build_completion_kwargs(full_messages, None, timeout)
+        kwargs = self._build_completion_kwargs(
+            full_messages, None, timeout, max_tokens=max_tokens,
+        )
         kwargs["stream"] = True
 
         accumulated = ""
@@ -294,13 +327,24 @@ class LiteLLMProvider(ModelProvider):
         messages: list[dict[str, str]],
         output_schema: type[BaseModel] | None,
         timeout: int,
+        *,
+        max_tokens: int | None = None,
     ) -> dict:
         """Build the kwargs dict for litellm.acompletion."""
+        resolved_max_tokens = max_tokens or self._config.max_output_tokens
         kwargs: dict = {
             "model": self._config.model,
             "messages": messages,
             "timeout": float(timeout),
+            "max_tokens": resolved_max_tokens,
         }
+
+        logger.debug(
+            "Completion kwargs: model=%s, max_tokens_arg=%s, "
+            "config.max_output_tokens=%s, resolved=%s",
+            self._config.model, max_tokens,
+            self._config.max_output_tokens, resolved_max_tokens,
+        )
 
         # Set API key if available
         if self._api_key:

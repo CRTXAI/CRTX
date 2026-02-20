@@ -106,11 +106,22 @@ def main(
 ) -> None:
     """CRTX — multi-model AI orchestration with adversarial Arbiter review."""
     if ctx.invoked_subcommand is None:
-        from triad.cli_display import render_full_logo
         from triad.repl import TriadREPL
 
-        render_full_logo(console)
         TriadREPL(dashboard=dashboard).run()
+
+
+@app.command()
+def repl(
+    dashboard: bool = typer.Option(
+        False, "--dashboard",
+        help="Start live dashboard with the REPL",
+    ),
+) -> None:
+    """Launch the interactive REPL session."""
+    from triad.repl import TriadREPL
+
+    TriadREPL(dashboard=dashboard).run()
 
 
 # ── Helpers ──────────────────────────────────────────────────────

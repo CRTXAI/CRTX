@@ -306,6 +306,301 @@ class TestWriterDebate:
         assert (Path(actual_path) / "summary.md").is_file()
 
 
+# ── Writer: # file: header BEFORE code block ─────────────────────
+
+
+class TestWriterFileHeaderBeforeBlock:
+    """Tests for extraction when # file: appears before the code block."""
+
+    def test_debate_file_header_before_block(self, tmp_path):
+        """Judge output with # file: before fenced block should extract files."""
+        dr = DebateResult(
+            proposals={"a": "proposal"},
+            rebuttals={},
+            final_arguments={},
+            judgment=(
+                "Here is the synthesized code:\n\n"
+                "# file: src/main.py\n"
+                "```python\n"
+                "from fastapi import FastAPI\n"
+                "app = FastAPI()\n"
+                "```\n\n"
+                "# file: src/utils.py\n"
+                "```python\n"
+                "def helper():\n"
+                "    return 42\n"
+                "```"
+            ),
+            judge_model="grok-4",
+        )
+        result = _make_debate_result(debate_result=dr)
+        out_dir = str(tmp_path / "output")
+
+        actual_path = write_pipeline_output(result, out_dir)
+
+        code_files = list(Path(actual_path, "code").rglob("*.py"))
+        filenames = [f.name for f in code_files]
+        assert "main.py" in filenames
+        assert "utils.py" in filenames
+
+    def test_parallel_file_header_before_block(self, tmp_path):
+        """Parallel synthesized_output with # file: before blocks."""
+        pr = ParallelResult(
+            individual_outputs={"m": "output"},
+            scores={},
+            votes={},
+            winner="m",
+            synthesized_output=(
+                "# file: api/routes.py\n"
+                "```python\n"
+                "def get_routes(): pass\n"
+                "```\n\n"
+                "# file: tests/test_routes.py\n"
+                "```python\n"
+                "def test_routes(): pass\n"
+                "```"
+            ),
+        )
+        result = _make_parallel_result(parallel_result=pr)
+        out_dir = str(tmp_path / "output")
+
+        actual_path = write_pipeline_output(result, out_dir)
+
+        code_files = list(Path(actual_path, "code").rglob("*.py"))
+        test_files = list(Path(actual_path, "tests").rglob("*.py"))
+        assert any(f.name == "routes.py" for f in code_files)
+        assert any(f.name == "test_routes.py" for f in test_files)
+
+    def test_file_header_with_blank_line_before_fence(self, tmp_path):
+        """# file: header with a blank line before the code block."""
+        dr = DebateResult(
+            proposals={"a": "proposal"},
+            rebuttals={},
+            final_arguments={},
+            judgment=(
+                "# file: app.py\n"
+                "\n"
+                "```python\n"
+                "print('hello')\n"
+                "```"
+            ),
+            judge_model="model-x",
+        )
+        result = _make_debate_result(debate_result=dr)
+        out_dir = str(tmp_path / "output")
+
+        actual_path = write_pipeline_output(result, out_dir)
+
+        code_files = list(Path(actual_path, "code").rglob("*.py"))
+        assert any(f.name == "app.py" for f in code_files)
+
+    def test_preserves_subdirectory_structure(self, tmp_path):
+        """# file: headers with subdirectories should preserve nesting."""
+        dr = DebateResult(
+            proposals={"a": "p"},
+            rebuttals={},
+            final_arguments={},
+            judgment=(
+                "# file: src/models/user.py\n"
+                "```python\n"
+                "class User: pass\n"
+                "```\n\n"
+                "# file: src/models/__init__.py\n"
+                "```python\n"
+                "from .user import User\n"
+                "```"
+            ),
+            judge_model="m",
+        )
+        result = _make_debate_result(debate_result=dr)
+        out_dir = str(tmp_path / "output")
+
+        actual_path = write_pipeline_output(result, out_dir)
+
+        code_dir = Path(actual_path, "code")
+        user_file = code_dir / "src" / "models" / "user.py"
+        init_file = code_dir / "src" / "models" / "__init__.py"
+        assert user_file.is_file()
+        assert init_file.is_file()
+
+
+# ── Writer: # file: headers without code fences (fallback) ──────
+
+
+class TestWriterUnfencedFallback:
+    """Tests for extraction when model outputs raw code with # file: headers."""
+
+    def test_unfenced_code_with_file_headers(self, tmp_path):
+        """Raw code separated by # file: headers should be extracted."""
+        dr = DebateResult(
+            proposals={"a": "proposal"},
+            rebuttals={},
+            final_arguments={},
+            judgment=(
+                "# file: main.py\n"
+                "def main():\n"
+                "    print('hello world')\n"
+                "\n"
+                "if __name__ == '__main__':\n"
+                "    main()\n"
+                "\n"
+                "# file: utils.py\n"
+                "def add(a, b):\n"
+                "    return a + b\n"
+            ),
+            judge_model="model-x",
+        )
+        result = _make_debate_result(debate_result=dr)
+        out_dir = str(tmp_path / "output")
+
+        actual_path = write_pipeline_output(result, out_dir)
+
+        code_files = list(Path(actual_path, "code").rglob("*.py"))
+        filenames = [f.name for f in code_files]
+        assert "main.py" in filenames
+        assert "utils.py" in filenames
+
+        # Verify content is correct
+        main_content = next(
+            f for f in code_files if f.name == "main.py"
+        ).read_text()
+        assert "def main():" in main_content
+        assert "print('hello world')" in main_content
+
+    def test_unfenced_with_partial_fences_stripped(self, tmp_path):
+        """# file: sections with partial fences should be cleaned."""
+        dr = DebateResult(
+            proposals={"a": "p"},
+            rebuttals={},
+            final_arguments={},
+            judgment=(
+                "# file: app.py\n"
+                "```python\n"
+                "app = 'hello'\n"
+                "```\n"
+            ),
+            judge_model="m",
+        )
+        result = _make_debate_result(debate_result=dr)
+        out_dir = str(tmp_path / "output")
+
+        actual_path = write_pipeline_output(result, out_dir)
+
+        code_files = list(Path(actual_path, "code").rglob("*.py"))
+        # The fenced version should be caught by the primary regex,
+        # but if it falls through, the fallback should strip fences
+        assert any(f.name == "app.py" for f in code_files)
+
+    def test_no_code_no_files(self, tmp_path):
+        """Empty judgment should not produce any files."""
+        dr = DebateResult(
+            proposals={"a": "p"},
+            rebuttals={},
+            final_arguments={},
+            judgment="",
+            judge_model="m",
+        )
+        result = _make_debate_result(debate_result=dr)
+        out_dir = str(tmp_path / "output")
+
+        actual_path = write_pipeline_output(result, out_dir)
+
+        code_files = list(Path(actual_path, "code").rglob("*"))
+        test_files = list(Path(actual_path, "tests").rglob("*"))
+        code_files = [f for f in code_files if f.is_file()]
+        test_files = [f for f in test_files if f.is_file()]
+        assert len(code_files) == 0
+        assert len(test_files) == 0
+
+
+# ── Writer: Mixed format extraction ─────────────────────────────
+
+
+class TestWriterMixedFormats:
+    """Tests for content mixing # file: inside/outside/without fences."""
+
+    def test_mixed_inside_and_outside_headers(self, tmp_path):
+        """Content with # file: both inside and before blocks."""
+        dr = DebateResult(
+            proposals={"a": "p"},
+            rebuttals={},
+            final_arguments={},
+            judgment=(
+                "# file: outside.py\n"
+                "```python\n"
+                "x = 1\n"
+                "```\n\n"
+                "```python\n"
+                "# file: inside.py\n"
+                "y = 2\n"
+                "```"
+            ),
+            judge_model="m",
+        )
+        result = _make_debate_result(debate_result=dr)
+        out_dir = str(tmp_path / "output")
+
+        actual_path = write_pipeline_output(result, out_dir)
+
+        code_files = list(Path(actual_path, "code").rglob("*.py"))
+        filenames = [f.name for f in code_files]
+        assert "outside.py" in filenames
+        assert "inside.py" in filenames
+
+    def test_code_block_without_language(self, tmp_path):
+        """Code block with no language specifier should still extract."""
+        dr = DebateResult(
+            proposals={"a": "p"},
+            rebuttals={},
+            final_arguments={},
+            judgment=(
+                "# file: config.toml\n"
+                "```\n"
+                "[server]\n"
+                "port = 8080\n"
+                "```"
+            ),
+            judge_model="m",
+        )
+        result = _make_debate_result(debate_result=dr)
+        out_dir = str(tmp_path / "output")
+
+        actual_path = write_pipeline_output(result, out_dir)
+
+        code_files = list(Path(actual_path, "code").rglob("*"))
+        code_files = [f for f in code_files if f.is_file()]
+        filenames = [f.name for f in code_files]
+        assert "config.toml" in filenames
+
+    def test_unnamed_blocks_get_auto_names(self, tmp_path):
+        """Code blocks without # file: headers get auto-generated names."""
+        dr = DebateResult(
+            proposals={"a": "p"},
+            rebuttals={},
+            final_arguments={},
+            judgment=(
+                "```python\n"
+                "def foo(): pass\n"
+                "```\n\n"
+                "```javascript\n"
+                "const bar = 42;\n"
+                "```"
+            ),
+            judge_model="m",
+        )
+        result = _make_debate_result(debate_result=dr)
+        out_dir = str(tmp_path / "output")
+
+        actual_path = write_pipeline_output(result, out_dir)
+
+        code_files = list(Path(actual_path, "code").rglob("*"))
+        code_files = [f for f in code_files if f.is_file()]
+        assert len(code_files) == 2
+        exts = {f.suffix for f in code_files}
+        assert ".py" in exts
+        assert ".js" in exts
+
+
 # ── Renderer: Parallel Mode ─────────────────────────────────────
 
 

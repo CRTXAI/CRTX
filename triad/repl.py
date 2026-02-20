@@ -13,11 +13,9 @@ import os
 import shlex
 
 from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
 from rich.text import Text
 
-from triad.cli_display import BRAND
+from triad.cli_display import BRAND, render_full_logo
 
 logger = logging.getLogger(__name__)
 
@@ -82,8 +80,7 @@ class TriadREPL:
                 console.print("[yellow]Dashboard requires extra deps.[/yellow]")
 
         self._check_providers()
-        self._print_status_dashboard()
-        self._print_quick_start()
+        self._print_welcome()
 
         try:
             while True:
@@ -160,104 +157,98 @@ class TriadREPL:
                 else:
                     self._provider_health[env_var] = ("none", "")
 
-    def _print_status_dashboard(self) -> None:
-        """Print the provider/model/defaults status panel.
-
-        Uses cached health data from ``_check_providers()`` — never
-        makes API calls itself.
-        """
+    def _print_welcome(self) -> None:
+        """Print the branded CRTX REPL welcome screen."""
         from triad.keys import PROVIDER_NAMES, PROVIDERS
 
-        # ── Provider connectivity (from cached health) ────────────
-        provider_text = Text("  Providers:  ")
+        console.print()
+        render_full_logo(console)
+
+        # Tagline
+        console.print(
+            Text("    Multi-model AI orchestration for code generation",
+                 style=BRAND["dim"])
+        )
+
+        # Provider status — colored dots on a single line
+        provider_line = Text("    ")
+        ok_count = 0
+        total_count = 0
+
         for env_var, _, _, _ in PROVIDERS:
+            total_count += 1
             name = PROVIDER_NAMES.get(env_var, env_var)
-            status, detail = self._provider_health.get(
+            status, _detail = self._provider_health.get(
                 env_var, ("none", ""),
             )
-            if status == "ok":
-                provider_text.append_text(
-                    Text.from_markup(f"[green]✓[/green] {name}  ")
-                )
-            elif status == "degraded":
-                suffix = f" ({detail})" if detail else ""
-                provider_text.append_text(
-                    Text.from_markup(
-                        f"[yellow]⚠[/yellow] {name}{suffix}  "
-                    )
-                )
-            elif status == "error":
-                provider_text.append_text(
-                    Text.from_markup(
-                        f"[red]✗[/red] [dim]{name}[/dim]  "
-                    )
-                )
-            else:
-                provider_text.append_text(
-                    Text.from_markup(
-                        f"[dim red]✗[/dim red] [dim]{name}[/dim]  "
-                    )
-                )
 
-        # ── Model count ───────────────────────────────────────────
+            if status == "ok":
+                provider_line.append("●", style=BRAND["green"])
+                provider_line.append(f" {name}", style="white")
+                ok_count += 1
+            elif status == "degraded":
+                provider_line.append("●", style=BRAND["amber"])
+                provider_line.append(f" {name}", style="white")
+                ok_count += 1
+            elif status == "error":
+                provider_line.append("○", style=BRAND["red"])
+                provider_line.append(f" {name}", style=BRAND["dim"])
+            else:
+                provider_line.append("○", style=BRAND["dim"])
+                provider_line.append(f" {name}", style=BRAND["dim"])
+            provider_line.append("   ")
+
+        console.print(provider_line)
+
+        # Model count + session defaults — single line
         model_count = 0
-        active_providers: set[str] = set()
         try:
             from triad.providers.registry import load_models
 
             registry = load_models()
             for cfg in registry.values():
-                key_env = cfg.api_key_env
-                if os.environ.get(key_env):
+                if os.environ.get(cfg.api_key_env):
                     model_count += 1
-                    active_providers.add(cfg.provider)
         except Exception:
-            logger.debug("Could not load model registry for status dashboard")
+            pass
 
-        model_text = Text(f"  Models:     {model_count} available")
-        if active_providers:
-            model_text.append(f" across {len(active_providers)} provider")
-            if len(active_providers) != 1:
-                model_text.append("s")
+        stats_line = Text("    ")
+        stats_line.append(f"{model_count}", style=f"bold {BRAND['green']}")
+        stats_line.append(" models ready", style=BRAND["dim"])
+        stats_line.append("  ·  ", style=BRAND["dim"])
+        stats_line.append(f"{ok_count}", style=f"bold {BRAND['green']}")
+        stats_line.append(f"/{total_count} providers", style=BRAND["dim"])
+        stats_line.append("  ·  ", style=BRAND["dim"])
+        stats_line.append(self.mode, style=BRAND["green"])
+        stats_line.append(" · ", style=BRAND["dim"])
+        stats_line.append(self.route, style=BRAND["green"])
+        stats_line.append(" · ", style=BRAND["dim"])
+        stats_line.append(self.arbiter, style=BRAND["green"])
+        console.print(stats_line)
 
-        # ── Defaults ──────────────────────────────────────────────
-        defaults_text = Text("  Defaults:   ")
-        defaults_text.append(self.mode, style=BRAND["green"])
-        defaults_text.append(" │ ", style="dim")
-        defaults_text.append(self.arbiter, style=BRAND["green"])
-        defaults_text.append(" │ ", style="dim")
-        defaults_text.append(self.route, style=BRAND["green"])
-
-        # ── Assemble panel ────────────────────────────────────────
-        body = Text()
-        body.append_text(provider_text)
-        body.append("\n")
-        body.append_text(model_text)
-        body.append("\n")
-        body.append_text(defaults_text)
-
-        console.print(Panel(
-            body,
-            title="[bold]Status[/bold]",
-            border_style="dim",
-            expand=True,
-            padding=(0, 1),
-        ))
-
-    def _print_quick_start(self) -> None:
-        """Print compact quick-start command hints."""
-        table = Table.grid(padding=(0, 4))
-        table.add_column(style=BRAND["green"], width=24)
-        table.add_column(style="dim")
-
-        table.add_row("Just type your task", "Run a pipeline with current defaults")
-        table.add_row("config", "View or change settings")
-        table.add_row("models", "See available models + fitness scores")
-        table.add_row("help", "All commands")
-
+        # Separator
         console.print()
-        console.print(Text("  Quick start:", style="bold"))
-        console.print(table)
+        sep = Text("    ")
+        sep.append("─" * 50, style=BRAND["dim"])
+        console.print(sep)
+        console.print()
+
+        # Quick start tips
+        tips = [
+            ('"Build a REST API for users"', "Run with current defaults"),
+            ("demo", "60-second guided demo  ·  ~$0.15"),
+            ("preset explore", "3-model parallel mode"),
+            ("help", "All commands"),
+        ]
+
+        for cmd, desc in tips:
+            line = Text("    ")
+            line.append(cmd, style=BRAND["green"])
+            padding = 36 - len(cmd)
+            line.append(" " * max(padding, 2))
+            line.append(desc, style=BRAND["dim"])
+            console.print(line)
+
         console.print()
 
     def _dispatch(self, user_input: str) -> None:
@@ -301,6 +292,24 @@ class TriadREPL:
 
         if command in _CLI_COMMANDS:
             self._invoke_cli(user_input)
+            return
+
+        # Slash commands — /demo, /help, etc.
+        if command.startswith("/"):
+            stripped = command[1:]
+            full_input = f"{stripped} {args}".strip() if args else stripped
+            if stripped in _CLI_COMMANDS:
+                self._invoke_cli(full_input)
+                return
+            if stripped == "help":
+                self._show_help()
+                return
+            if stripped in ("exit", "quit"):
+                raise EOFError
+            console.print(
+                f"  [{BRAND['dim']}]Unknown command: /{stripped}. "
+                f"Type help for available commands.[/{BRAND['dim']}]"
+            )
             return
 
         # Everything else is treated as a task description
