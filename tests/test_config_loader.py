@@ -190,10 +190,9 @@ class TestGetBestModelForRole:
     def test_best_implementer(self):
         registry = load_models(_CONFIG_DIR / "models.toml")
         best = get_best_model_for_role(registry, PipelineStage.IMPLEMENT)
-        # GPT-4o and Claude Sonnet both have implementer=0.85
-        # max() returns the first one found at that value
-        best_model = registry[best]
-        assert best_model.fitness.implementer == 0.85
+        # DeepSeek V3 has implementer=0.88, highest in registry
+        assert best == "deepseek-chat"
+        assert registry[best].fitness.implementer == 0.88
 
     def test_best_verifier(self):
         registry = load_models(_CONFIG_DIR / "models.toml")

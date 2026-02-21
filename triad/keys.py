@@ -40,6 +40,12 @@ PROVIDERS = [
         "https://aistudio.google.com/apikey",
     ),
     (
+        "DEEPSEEK_API_KEY",
+        "DeepSeek (V3, R1)",
+        "Strong coding & reasoning, low cost",
+        "https://platform.deepseek.com/api_keys",
+    ),
+    (
         "XAI_API_KEY",
         "xAI (Grok)",
         "Strong reasoning & coding",
@@ -52,6 +58,7 @@ _VALIDATION_MODELS: dict[str, str] = {
     "ANTHROPIC_API_KEY": "anthropic/claude-sonnet-4-5-20250929",
     "OPENAI_API_KEY": "gpt-4o-mini",
     "GEMINI_API_KEY": "gemini/gemini-2.5-flash",
+    "DEEPSEEK_API_KEY": "deepseek/deepseek-chat",
     "XAI_API_KEY": "xai/grok-3",
 }
 
@@ -59,6 +66,7 @@ _VALIDATION_DISPLAY: dict[str, str] = {
     "ANTHROPIC_API_KEY": "Claude Sonnet 4.5",
     "OPENAI_API_KEY": "GPT-4o Mini",
     "GEMINI_API_KEY": "Gemini 2.5 Flash",
+    "DEEPSEEK_API_KEY": "DeepSeek V3",
     "XAI_API_KEY": "Grok 3",
 }
 
@@ -67,6 +75,7 @@ PROVIDER_NAMES: dict[str, str] = {
     "ANTHROPIC_API_KEY": "Anthropic",
     "OPENAI_API_KEY": "OpenAI",
     "GEMINI_API_KEY": "Google",
+    "DEEPSEEK_API_KEY": "DeepSeek",
     "XAI_API_KEY": "xAI",
 }
 

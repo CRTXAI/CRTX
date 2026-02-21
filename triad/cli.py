@@ -2677,6 +2677,188 @@ def improve(
         viewer.run()
 
 
+# ── Benchmark ─────────────────────────────────────────────────────
+
+
+@app.command()
+def benchmark(
+    quick: bool = typer.Option(
+        True, "--quick/--full",
+        help="Quick mode: 3 prompts x 4 conditions (default). --full runs all.",
+    ),
+    results: bool = typer.Option(
+        False, "--results",
+        help="Display results from the last benchmark run and exit",
+    ),
+    cost_only: bool = typer.Option(
+        False, "--cost-only",
+        help="Estimate cost and exit without running",
+    ),
+) -> None:
+    """Run the CRTX benchmark suite — compare models and pipelines.
+
+    Tests code generation quality across single-model baselines and
+    CRTX pipeline configurations. Scores on: parse rate, runs, tests,
+    type hints, and imports.
+
+    Quick mode (default):  3 prompts x 4 conditions
+    Full mode (--full):    3 prompts x 5 conditions
+    """
+    from triad.benchmark.reporter import (
+        display_last_results,
+        display_results,
+        write_results_json,
+    )
+    from triad.benchmark.runner import BenchmarkRunner
+
+    # --results: just show the last run
+    if results:
+        if not display_last_results(console):
+            console.print("[yellow]No benchmark results found.[/yellow]")
+            console.print(
+                "[dim]Run [bold]crtx benchmark[/bold] first.[/dim]"
+            )
+        return
+
+    from triad.keys import has_any_key
+
+    if not has_any_key():
+        console.print(
+            "[red]No API keys configured.[/red] "
+            "Run [bold]crtx setup[/bold] to get started."
+        )
+        raise typer.Exit(1) from None
+
+    registry = _load_registry()
+    runner = BenchmarkRunner(console, registry, quick=quick)
+
+    # --cost-only: estimate and exit
+    if cost_only:
+        estimated = runner.estimate_cost()
+        mode_label = "quick" if quick else "full"
+        console.print(Panel(
+            f"[bold]Estimated cost ({mode_label}):[/bold] ${estimated:.4f}",
+            title="[bold blue]Benchmark Cost Estimate[/bold blue]",
+            border_style="blue",
+        ))
+        console.print(
+            "[dim]Estimates use conservative token projections. "
+            "Actual costs may vary.[/dim]"
+        )
+        return
+
+    # Run the benchmark
+    mode_label = "quick" if quick else "full"
+    console.print(Panel(
+        f"[bold]Mode:[/bold] {mode_label}\n"
+        f"[bold]Conditions:[/bold] {', '.join(c[0] for c in runner._conditions)}\n"
+        f"[bold]Estimated cost:[/bold] ${runner.estimate_cost():.4f}",
+        title="[bold blue]CRTX Benchmark[/bold blue]",
+        border_style="blue",
+    ))
+
+    suite_result = asyncio.run(runner.run())
+
+    # Display results
+    console.print()
+    display_results(suite_result, console)
+
+    # Write results.json
+    from pathlib import Path as _Path
+
+    from triad import __version__ as _ver
+
+    results_path = _Path.home() / ".crtx" / "benchmark-data" / _ver / "results.json"
+    write_results_json(suite_result, results_path)
+    console.print(f"[dim]Results saved to {results_path}[/dim]")
+
+
+# ── Loop ──────────────────────────────────────────────────────────
+
+
+@app.command()
+def loop(
+    task: str = typer.Argument(..., help="Task description — what to build"),
+    max_iter: int = typer.Option(
+        0, "--max-iter",
+        help="Override max fix iterations (0 = auto from routing)",
+    ),
+    output_dir: str = typer.Option(
+        "crtx-output", "--output-dir", "-o",
+        help="Directory for output files",
+    ),
+    no_arbiter: bool = typer.Option(
+        False, "--no-arbiter",
+        help="Skip independent arbiter review after test-fix cycle",
+    ),
+) -> None:
+    """Generate → test → fix cycle. Iterates until tests pass.
+
+    Routes the task by complexity, generates code with a single model call,
+    runs local tests, and feeds failures back for targeted fixes.
+    """
+    from triad.keys import has_any_key
+
+    if not has_any_key():
+        console.print(
+            "[red]No API keys configured.[/red] "
+            "Run [bold]crtx setup[/bold] to get started."
+        )
+        raise typer.Exit(1) from None
+
+    from triad.loop.orchestrator import LoopOrchestrator
+    from triad.loop.presenter import LoopPresenter
+
+    registry = _load_registry()
+    presenter = LoopPresenter(console)
+
+    presenter.show_header(task)
+
+    orchestrator = LoopOrchestrator(
+        registry,
+        arbiter=not no_arbiter,
+        on_route=presenter.on_route,
+        on_generate=presenter.on_generate,
+        on_test=presenter.on_test,
+        on_fix=presenter.on_fix,
+        on_review=presenter.on_review,
+        on_escalation=presenter.on_escalation,
+    )
+
+    # Override max iterations if specified
+    if max_iter > 0:
+        original_run = orchestrator.run
+
+        async def _run_with_override(prompt: str):
+            result_holder = []
+
+            orig_classify = orchestrator._router.classify
+            def _classify_override(p):
+                route = orig_classify(p)
+                route.max_fix_iterations = max_iter
+                return route
+            orchestrator._router.classify = _classify_override
+
+            return await original_run(prompt)
+
+        orchestrator.run = _run_with_override
+
+    result = asyncio.run(orchestrator.run(task))
+    presenter.show_result(result)
+
+    # Write output files
+    if result.files and not result.error:
+        from pathlib import Path as _Path
+
+        session_dir = _Path(output_dir) / "loop"
+        session_dir.mkdir(parents=True, exist_ok=True)
+        for filepath, content in result.files.items():
+            dest = session_dir / filepath
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(content, encoding="utf-8")
+        console.print(f"[dim]Output written to {session_dir}[/dim]")
+
+
 # ── Dashboard ────────────────────────────────────────────────────
 
 

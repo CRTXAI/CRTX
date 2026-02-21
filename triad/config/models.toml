@@ -188,6 +188,48 @@ implementer = 0.75
 refactorer = 0.70
 verifier = 0.70
 
+# ─── DeepSeek ────────────────────────────────────────────────
+
+[models.deepseek-chat]
+provider = "deepseek"
+model = "deepseek/deepseek-chat"
+display_name = "DeepSeek V3"
+api_key_env = "DEEPSEEK_API_KEY"
+context_window = 65536
+max_output_tokens = 8192
+supports_tools = true
+supports_structured = true
+supports_vision = false
+supports_thinking = false
+cost_input = 0.27
+cost_output = 1.10
+
+[models.deepseek-chat.fitness]
+architect = 0.85
+implementer = 0.88
+refactorer = 0.80
+verifier = 0.80
+
+[models.deepseek-reasoner]
+provider = "deepseek"
+model = "deepseek/deepseek-reasoner"
+display_name = "DeepSeek R1"
+api_key_env = "DEEPSEEK_API_KEY"
+context_window = 65536
+max_output_tokens = 8192
+supports_tools = false
+supports_structured = false
+supports_vision = false
+supports_thinking = true
+cost_input = 0.55
+cost_output = 2.19
+
+[models.deepseek-reasoner.fitness]
+architect = 0.88
+implementer = 0.85
+refactorer = 0.85
+verifier = 0.85
+
 # ─── xAI ─────────────────────────────────────────────────────
 
 [models.grok-4]

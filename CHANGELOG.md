@@ -2,6 +2,47 @@
 
 All notable changes to CRTX will be documented in this file.
 
+## [0.2.0] - 2026-02-20
+
+### CRTX Loop
+
+A new autonomous code generation pipeline: **generate → test → fix → review**.
+
+- **Loop orchestrator** (`crtx loop`) — single-command code generation with automated quality assurance. Routes tasks by complexity, generates code, runs local tests, and iterates fixes until tests pass.
+- **Smart routing** — classifies prompts as simple/medium/complex/safety and selects the appropriate model, fix iteration budget, and timeout tier.
+- **Test runner** — local quality gate: AST parse → import check → pyflakes → pytest → entry point execution. Per-file pytest fallback on collection failures.
+- **Code fixer** — targeted fix prompts from structured test failures. Detects pytest collection failures and phantom API references in test files.
+- **Test-generation fallback** — if generation produces zero test files, a second call generates comprehensive pytest tests so the fix cycle always has tests to work with.
+
+### Three-Tier Gap Closing
+
+When the normal fix cycle can't resolve failures, three escalation tiers activate before giving up:
+
+- **Tier 1 — Diagnose then fix** (~$0.08): Two calls to the primary model. First: "Do NOT write code — analyze the root cause." Second: feed the diagnosis back with the code and ask for a targeted fix.
+- **Tier 2 — Minimal context retry** (~$0.05): Strip context to ONLY the failing test file and the single source file it imports. Nothing else. Fresh perspective with less noise.
+- **Tier 3 — Second opinion** (~$0.08): Escalate to a different model (prefers o3 if primary was Sonnet, Sonnet if primary was o3, Gemini as fallback). Includes the primary model's diagnosis: "they diagnosed this but couldn't fix it — what do you see?"
+
+### Arbiter Review in Loop
+
+- After the test-fix cycle converges, an independent model reviews the code via the existing Arbiter layer (APPROVE/FLAG/REJECT/HALT verdicts).
+- On REJECT, triggers one targeted fix cycle and retests.
+- Cross-model enforcement — the arbiter always uses a different model than the generator.
+- `--no-arbiter` flag to skip the review step.
+
+### Benchmark Improvements
+
+- **Verified scoring dimension** — runs TestRunner on all non-loop conditions after scoring to produce Verified (Yes/No), Tests Run (X/Y), and Dev Time (estimated developer minutes to production) columns.
+- **Dev time estimation** — formula: test failures × 3 min + import errors × 2 min + 20 min if entry fails + 5 min per syntax error, capped at 45 min for complex tasks.
+- **Tier-aware timeouts** — pytest and entry point timeouts scale by prompt tier (simple=60s, medium=90s, complex=120s).
+- **Type hints scoring fix** — excludes test functions and Test* class methods from type hint coverage calculation.
+- **Per-file pytest fallback** in test runner — when combined pytest crashes on collection, runs each test file individually.
+- **Phantom API detection** in fixer — test files importing names that don't exist in source are flagged for reconciliation.
+
+### Loop Generation Quality
+
+- **Direct imports rule** — generation prompt now instructs "Use direct imports (`from models import User`), NOT relative imports." Prevents import resolution failures.
+- **Fixer collection-failure awareness** — on pytest collection failure, all test files are included in the broken set with a reconciliation instruction.
+
 ## [0.1.1] - 2026-02-19
 
 ### Fixed
