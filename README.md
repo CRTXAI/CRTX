@@ -164,6 +164,7 @@ CRTX works with any model supported by LiteLLM — that's 100+ providers. Out of
 | OpenAI | GPT-4o, o3 |
 | Google | Gemini 2.5 Pro, Flash |
 | xAI | Grok |
+| DeepSeek | DeepSeek R1 |
 
 Add any LiteLLM-compatible model in `~/.crtx/config.toml`.
 
