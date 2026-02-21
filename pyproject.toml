@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "crtx"
-version = "0.2.0"
+version = "0.2.1"
 description = "Multi-model AI orchestration platform. Plugin any LLM. Ship better code."
 readme = "README.md"
 license = "Apache-2.0"
@@ -30,8 +30,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://crtx.dev"
-Repository = "https://github.com/triad-ai/crtx"
+Homepage = "https://www.crtx-ai.com"
+Repository = "https://github.com/CRTXAI/CRTX"
 
 [project.optional-dependencies]
 dashboard = [

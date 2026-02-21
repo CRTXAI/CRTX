@@ -2,6 +2,12 @@
 
 All notable changes to CRTX will be documented in this file.
 
+## [0.2.1] - 2026-02-20
+
+### Fixed
+
+- **PyPI links** — Homepage and Repository URLs now point to the correct locations (crtx-ai.com and github.com/CRTXAI/CRTX)
+
 ## [0.2.0] - 2026-02-20
 
 ### CRTX Loop
