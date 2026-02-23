@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "crtx"
-version = "0.2.1"
+version = "0.3.0"
 description = "Multi-model AI orchestration platform. Plugin any LLM. Ship better code."
 readme = "README.md"
 license = "Apache-2.0"
@@ -49,7 +49,7 @@ dev = [
 crtx = "triad.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["triad"]
+packages = ["triad", "crtx"]
 
 [tool.ruff]
 target-version = "py312"
