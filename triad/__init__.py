@@ -1,3 +1,6 @@
 """CRTX — multi-model AI orchestration platform."""
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
+
+from .memory import Memory
+from .memory.schema import Decision, Pattern, TaxonomyRule
