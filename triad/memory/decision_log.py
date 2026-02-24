@@ -103,6 +103,10 @@ class DecisionLog:
             except (json.JSONDecodeError, OSError):
                 continue
 
+            # Skip non-draft files (e.g. medium_queue.json is a list)
+            if not isinstance(draft, dict):
+                continue
+
             status = draft.get("status", "")
             if status not in status_map:
                 continue  # Not a completed human decision
