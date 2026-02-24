@@ -59,6 +59,10 @@ class Memory:
         self.state.last_updated = datetime.now(timezone.utc).isoformat()
         self._save_state()
 
+    def update_decision_reason(self, decision_id: str, reason: str) -> bool:
+        """Tag a reason onto an already-recorded decision. Called after optional reason capture."""
+        return self.log.update_decision_reason(decision_id, reason)
+
     def classify(
         self,
         content_type: str,

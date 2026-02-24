@@ -70,6 +70,36 @@ class DecisionLog:
         """
         return self._ingest_draft_queue(clawbucks_dir)
 
+    def update_decision_reason(self, decision_id: str, reason: str) -> bool:
+        """Update the decision_reason on an existing decision.
+
+        Rewrites decisions.jsonl in-place. Safe at current scale (hundreds of
+        decisions). Switch to SQLite if volume exceeds ~10K decisions.
+
+        Returns True if the decision was found and updated.
+        """
+        if not self.decisions_file.exists():
+            return False
+
+        lines = self.decisions_file.read_text(encoding="utf-8").splitlines()
+        updated = False
+        new_lines: list[str] = []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            data = json.loads(line)
+            if data.get("decision_id") == decision_id:
+                data["decision_reason"] = reason
+                updated = True
+            new_lines.append(json.dumps(data))
+
+        if updated:
+            self.decisions_file.write_text(
+                "\n".join(new_lines) + "\n", encoding="utf-8"
+            )
+        return updated
+
     def backfill_engagement(self) -> None:
         # TODO: Needs the niche scorer to be built first
         pass

@@ -27,6 +27,7 @@ class Decision:
     outcome_score: Optional[float] = None
     task_class: Optional[str] = None
     taxonomy_action: Optional[str] = None  # "auto_ship", "flag", "pause"
+    decision_reason: Optional[str] = None  # Human-tagged reason: "on_voice", "strong_data", "too_generic", etc.
 
 
 @dataclass
