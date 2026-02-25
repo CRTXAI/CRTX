@@ -905,6 +905,7 @@ def _display_completion(
     *,
     can_improve: bool = False,
     can_apply: bool = False,
+    can_new_review: bool = False,
 ) -> None:
     """Display the completion panel with side-by-side tables.
 
@@ -1144,6 +1145,8 @@ def _display_completion(
             menu_parts += "[green]\\[i][/green] [dim]Improve[/dim]  "
         if can_apply and getattr(result, "improve_result", None):
             menu_parts += "[green]\\[a][/green] [dim]Apply[/dim]  "
+        if can_new_review:
+            menu_parts += "[green]\\[n][/green] [dim]New review[/dim]  "
         menu_parts += "[green]\\[Enter][/green] [dim]Exit[/dim]"
         completion_markup += "\n\n" + menu_parts
 
@@ -2209,18 +2212,35 @@ def review(
 
 
 def _read_source_files(paths: list[str]) -> str:
-    """Read source files into a single block with # file: headers."""
-    parts: list[str] = []
+    """Read source files into a single block with === FILE: headers."""
+    import glob as globmod
+
+    resolved: list[Path] = []
     for p in paths:
         path = Path(p)
-        if path.is_dir():
-            for f in sorted(path.rglob("*.py")):
-                parts.append(f"# file: {f}\n{f.read_text(encoding='utf-8')}")
-        elif path.is_file():
-            parts.append(f"# file: {path}\n{path.read_text(encoding='utf-8')}")
+        if path.is_file():
+            resolved.append(path)
+        elif path.is_dir():
+            resolved.extend(sorted(path.rglob("*.py")))
+        elif any(c in p for c in ("*", "?", "[")):
+            expanded = sorted(globmod.glob(p, recursive=True))
+            if not expanded:
+                console.print(f"[red]No files match pattern:[/red] {p}")
+                raise typer.Exit(1)
+            for ep in expanded:
+                ep_path = Path(ep)
+                if ep_path.is_file():
+                    resolved.append(ep_path)
+                elif ep_path.is_dir():
+                    resolved.extend(sorted(ep_path.rglob("*.py")))
         else:
             console.print(f"[red]Not found:[/red] {p}")
             raise typer.Exit(1)
+
+    parts: list[str] = []
+    for f in resolved:
+        parts.append(f"=== FILE: {f} ===\n{f.read_text(encoding='utf-8')}")
+
     if not parts:
         console.print("[red]No source files found.[/red]")
         raise typer.Exit(1)
@@ -2236,6 +2256,10 @@ def review_code(
     focus: str = typer.Option(
         None, "--focus", "-f",
         help="Review focus area (e.g. 'security', 'performance')",
+    ),
+    spec: str = typer.Option(
+        "", "--spec", "-s",
+        help="Path to spec/requirements file to review code against",
     ),
     preset: str = typer.Option(
         None, "--preset", "-p",
@@ -2284,6 +2308,15 @@ def review_code(
     # Read source files
     source_code = _read_source_files(files)
 
+    # Load spec file if provided
+    spec_content = ""
+    if spec:
+        spec_path = Path(spec)
+        if not spec_path.is_file():
+            console.print(f"[red]Spec file not found:[/red] {spec}")
+            raise typer.Exit(1) from None
+        spec_content = spec_path.read_text(encoding="utf-8")
+
     from triad.cli_display import PipelineDisplay
 
     registry = _load_registry()
@@ -2331,6 +2364,8 @@ def review_code(
 
     # Build task — source code goes in context so templates receive it
     task_desc = "Review this code"
+    if spec_content:
+        task_desc += " against the provided specification"
     if focus:
         task_desc += f" with focus on: {focus}"
 
@@ -2347,6 +2382,7 @@ def review_code(
     task_spec = TaskSpec(
         task=task_desc,
         context=source_code,
+        domain_rules=spec_content,
         output_dir=output_dir,
     )
 
@@ -2391,7 +2427,7 @@ def review_code(
     # Display completion + interactive viewer
     _display_completion(
         pipeline_result, actual_path,
-        can_improve=True, can_apply=True,
+        can_improve=True, can_apply=True, can_new_review=interactive,
     )
 
     if interactive:
@@ -2451,10 +2487,56 @@ def review_code(
             apply_result = engine.run()
             _display_apply_result(apply_result)
 
+        def _new_review_from_viewer(new_files, new_spec):
+            """Run a fresh review pipeline on new files."""
+            try:
+                new_source = _read_source_files(new_files)
+
+                new_spec_content = ""
+                if new_spec:
+                    spec_p = Path(new_spec)
+                    if not spec_p.is_file():
+                        console.print(f"[red]Spec file not found:[/red] {new_spec}")
+                        return None
+                    new_spec_content = spec_p.read_text(encoding="utf-8")
+
+                new_task_desc = "Review this code"
+                if new_spec_content:
+                    new_task_desc += " against the provided specification"
+                if focus:
+                    new_task_desc += f" with focus on: {focus}"
+
+                new_task = TaskSpec(
+                    task=new_task_desc,
+                    context=new_source,
+                    domain_rules=new_spec_content,
+                    output_dir=output_dir,
+                )
+                new_emitter = PipelineEventEmitter()
+                _attach_dashboard_relay(new_emitter)
+                new_display = PipelineDisplay(
+                    console, "review", resolved_route, resolved_arbiter,
+                )
+                new_emitter.add_listener(new_display.create_listener())
+                with new_display:
+                    new_result = asyncio.run(
+                        run_pipeline(new_task, config, registry, new_emitter),
+                    )
+                new_path = write_pipeline_output(new_result, output_dir)
+                _display_completion(
+                    new_result, new_path,
+                    can_improve=True, can_apply=True, can_new_review=True,
+                )
+                return (new_result, new_path)
+            except Exception as exc:
+                console.print(f"[red]Review failed: {exc}[/red]")
+                return None
+
         viewer = PostRunViewer(
             console, Path(actual_path), pipeline_result,
             on_improve=_improve_from_review,
             on_apply=_apply_improved,
+            on_new_review=_new_review_from_viewer,
         )
         viewer.run()
 
@@ -2925,6 +3007,100 @@ def dashboard(
             kernel32.SetConsoleMode(stdin_handle, old_mode)
     else:
         uvicorn.run(app_instance, host="0.0.0.0", port=port, log_level="warning")
+
+
+# ── Review command ───────────────────────────────────────────────
+
+@app.command("review")
+def review_cmd(
+    prompt: str | None = typer.Option(
+        None, "--prompt", "-p", help="Content to review (inline string)."
+    ),
+    file: Path | None = typer.Option(
+        None, "--file", "-f", help="Path to file containing content to review."
+    ),
+    content_type: str = typer.Option(
+        "general", "--type", "-t", help="Content type hint (article, tweet, code, etc.)."
+    ),
+    format: str = typer.Option(
+        "text", "--format", help="Output format: text or json."
+    ),
+    model: str | None = typer.Option(
+        None, "--model", "-m", help="Override review model (e.g. xai/grok-4-0709)."
+    ),
+    timeout: int = typer.Option(
+        60, "--timeout", help="API call timeout in seconds."
+    ),
+) -> None:
+    """Run a standalone Arbiter review on content or a file.
+
+    Examples:
+
+        crtx review --prompt "Is 2+2=4?"
+
+        crtx review --file output.py --type code --format json
+
+        crtx review --prompt "My tweet draft" --type tweet --format json
+    """
+    from crtx.arbiter import standalone_review
+
+    # Resolve content
+    if file is not None:
+        if not file.exists():
+            console.print(f"[red]File not found:[/red] {file}")
+            raise typer.Exit(1)
+        content = file.read_text(encoding="utf-8")
+    elif prompt is not None:
+        content = prompt
+    else:
+        console.print("[red]Error:[/red] Provide --prompt or --file.")
+        raise typer.Exit(1)
+
+    fmt = format.lower().strip()
+
+    if fmt != "json":
+        console.print("[dim]Running Arbiter review...[/dim]")
+
+    result = asyncio.run(
+        standalone_review(content, content_type=content_type, model=model, timeout=timeout)
+    )
+
+    if fmt == "json":
+        # Clean JSON output — no decoration, parseable by machines
+        print(json.dumps(result, indent=2))
+        return
+
+    # Rich text output
+    verdict = result.get("verdict", "FLAG")
+    confidence = result.get("confidence", 0.0)
+    notes = result.get("notes", [])
+    checks = result.get("checks", {})
+
+    verdict_colors = {"APPROVE": "green", "FLAG": "yellow", "REJECT": "red"}
+    color = verdict_colors.get(verdict, "white")
+
+    console.print(
+        Panel(
+            f"[bold {color}]{verdict}[/bold {color}]  "
+            f"[dim]confidence: {confidence:.0%}[/dim]",
+            title="[bold]Arbiter Verdict[/bold]",
+            border_style=color,
+        )
+    )
+
+    if checks:
+        table = Table(show_header=True, header_style="bold dim", box=None, padding=(0, 2))
+        table.add_column("Check", style="dim")
+        table.add_column("Result")
+        for check, passed in checks.items():
+            icon = "[green]✓[/green]" if passed else "[red]✗[/red]"
+            table.add_row(check, icon)
+        console.print(table)
+
+    if notes:
+        console.print("\n[bold]Notes:[/bold]")
+        for note in notes:
+            console.print(f"  • {note}")
 
 
 # ── Entry point ──────────────────────────────────────────────────
