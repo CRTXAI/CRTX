@@ -36,7 +36,10 @@ from triad.schemas.pipeline import (
 )
 from triad.schemas.routing import RoutingDecision, RoutingStrategy
 
-runner = CliRunner()
+# NO_COLOR=1 prevents Rich from injecting ANSI codes inside option names,
+# which breaks substring matching in CI (headless, no TTY).
+# COLUMNS=200 prevents wrapping that could split a flag across lines.
+runner = CliRunner(env={"NO_COLOR": "1", "COLUMNS": "200"})
 
 
 # ── Factories ──────────────────────────────────────────────────────
