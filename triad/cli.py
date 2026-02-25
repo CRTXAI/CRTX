@@ -2779,12 +2779,31 @@ def benchmark(
 ) -> None:
     """Run the CRTX benchmark suite — compare models and pipelines.
 
-    Tests code generation quality across single-model baselines and
-    CRTX pipeline configurations. Scores on: parse rate, runs, tests,
-    type hints, and imports.
+    Tests code generation quality across single-model baselines and CRTX
+    pipeline configurations on YOUR machine with YOUR API keys. No trust us —
+    see for yourself.
 
-    Quick mode (default):  3 prompts x 4 conditions
-    Full mode (--full):    3 prompts x 5 conditions
+    Scores each condition on 5 dimensions: parse rate, runs cleanly, tests
+    pass, type hints present, imports resolve. Composite 0–100 score.
+
+    Quick mode (default):  3 prompts × 4 conditions — ~15 minutes, ~$0.50
+    Full mode (--full):    3 prompts × 5 conditions — ~90 minutes, ~$3.00
+
+    Example output:
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  CRTX Benchmark Results — Quick Mode (3 prompts × 4 conditions) │
+    ├───────────────────────┬───────┬────────┬────────┬──────────────┤
+    │ Condition             │ Score │  Cost  │  Time  │ Arbiter pass │
+    ├───────────────────────┼───────┼────────┼────────┼──────────────┤
+    │ Single Sonnet         │  84%  │ $0.13  │   86s  │    n/a       │
+    │ Single o3             │  73%  │ $0.14  │   59s  │    n/a       │
+    │ CRTX Loop (balanced)  │  91%  │ $0.38  │  142s  │    94%       │
+    │ CRTX Debate           │  88%  │ $0.71  │  210s  │    91%       │
+    └───────────────────────┴───────┴────────┴────────┴──────────────┘
+    Loop beats single-model by 7 points at 3x cost. Worth it? Your call.
+
+    Results saved to ~/.crtx/benchmark/latest.json. Re-display with --results.
     """
     from triad.benchmark.reporter import (
         display_last_results,
