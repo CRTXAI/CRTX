@@ -72,6 +72,50 @@ def _fallback_verdict(reason: str) -> dict:
     }
 
 
+def check(
+    content: str,
+    content_type: str = "general",
+    model: str | None = None,
+    *,
+    timeout: int = 60,
+) -> dict:
+    """Synchronous Arbiter quality check — the simplest SDK entry point.
+
+    No pipeline context needed. Calls Grok-4 (Arbiter model) directly.
+    Falls back to FLAG on any error — never raises.
+
+    Args:
+        content:      Text, code, or any content to review.
+        content_type: Hint for the reviewer ("article", "tweet", "code", etc.).
+        model:        Override the default review model (xai/grok-4-0709).
+        timeout:      API call timeout in seconds.
+
+    Returns:
+        Dict: {"verdict": "APPROVE"|"FLAG"|"REJECT", "confidence": float,
+               "checks": {quality, clarity, completeness, accuracy}, "notes": [...]}
+
+    Example::
+
+        from crtx import check
+        result = check("def foo(): pass", content_type="code")
+        if result["verdict"] == "APPROVE":
+            ship_it()
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    coro = standalone_review(content, content_type, model, timeout=timeout)
+    if loop and loop.is_running():
+        # Already inside an async context — caller should use standalone_review() directly
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            future = ex.submit(asyncio.run, coro)
+            return future.result()
+    return asyncio.run(coro)
+
+
 async def standalone_review(
     content: str,
     content_type: str = "general",
