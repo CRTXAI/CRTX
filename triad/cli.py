@@ -3011,13 +3011,13 @@ def dashboard(
 
 # ── Review command ───────────────────────────────────────────────
 
-@app.command("review")
-def review_cmd(
+@app.command("check")
+def check_cmd(
     prompt: str | None = typer.Option(
-        None, "--prompt", "-p", help="Content to review (inline string)."
+        None, "--prompt", "-p", help="Content to check (inline string)."
     ),
     file: Path | None = typer.Option(
-        None, "--file", "-f", help="Path to file containing content to review."
+        None, "--file", "-f", help="Path to file containing content to check."
     ),
     content_type: str = typer.Option(
         "general", "--type", "-t", help="Content type hint (article, tweet, code, etc.)."
@@ -3032,15 +3032,18 @@ def review_cmd(
         60, "--timeout", help="API call timeout in seconds."
     ),
 ) -> None:
-    """Run a standalone Arbiter review on content or a file.
+    """Run a standalone Arbiter quality check on content or a file.
+
+    No pipeline context needed. Uses Arbiter model directly (default: Grok-4).
+    Use 'crtx review' for git diff / code review instead.
 
     Examples:
 
-        crtx review --prompt "Is 2+2=4?"
+        crtx check --prompt "Is 2+2=4?"
 
-        crtx review --file output.py --type code --format json
+        crtx check --file output.py --type code --format json
 
-        crtx review --prompt "My tweet draft" --type tweet --format json
+        crtx check --prompt "My tweet draft" --type tweet --format json
     """
     from crtx.arbiter import standalone_review
 

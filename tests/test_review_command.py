@@ -1,4 +1,4 @@
-"""Tests for crtx review command and standalone_review().
+"""Tests for crtx check command and standalone_review().
 
 All LLM calls are mocked — no real API calls made in this suite.
 """
@@ -148,13 +148,13 @@ async def test_standalone_review_all_models_fail():
     assert any("API down" in n or "failed" in n for n in result["notes"])
 
 
-# ── CLI review command ────────────────────────────────────────────────────────
+# -- CLI check command -------------------------------------------------------------
 
-def test_cli_review_json_output():
+def test_cli_check_json_output():
     mock_resp = _mock_litellm_response("APPROVE", 0.95)
     with patch("litellm.acompletion", new=AsyncMock(return_value=mock_resp)):
         result = runner.invoke(
-            app, ["review", "--prompt", "Is 2+2=4?", "--format", "json"]
+            app, ["check", "--prompt", "Is 2+2=4?", "--format", "json"]
         )
 
     assert result.exit_code == 0
@@ -165,20 +165,20 @@ def test_cli_review_json_output():
     assert "notes" in parsed
 
 
-def test_cli_review_text_output():
+def test_cli_check_text_output():
     mock_resp = _mock_litellm_response("APPROVE", 0.95)
     with patch("litellm.acompletion", new=AsyncMock(return_value=mock_resp)):
-        result = runner.invoke(app, ["review", "--prompt", "Good content"])
+        result = runner.invoke(app, ["check", "--prompt", "Good content"])
 
     assert result.exit_code == 0
     assert "APPROVE" in result.output
 
 
-def test_cli_review_reject_output():
+def test_cli_check_reject_output():
     mock_resp = _mock_litellm_response("REJECT", 0.88)
     with patch("litellm.acompletion", new=AsyncMock(return_value=mock_resp)):
         result = runner.invoke(
-            app, ["review", "--prompt", "Bad content", "--format", "json"]
+            app, ["check", "--prompt", "Bad content", "--format", "json"]
         )
 
     assert result.exit_code == 0
@@ -186,14 +186,14 @@ def test_cli_review_reject_output():
     assert parsed["verdict"] == "REJECT"
 
 
-def test_cli_review_file_flag(tmp_path: Path):
+def test_cli_check_file_flag(tmp_path: Path):
     content_file = tmp_path / "content.txt"
     content_file.write_text("Article content goes here.")
     mock_resp = _mock_litellm_response("FLAG", 0.65)
     with patch("litellm.acompletion", new=AsyncMock(return_value=mock_resp)):
         result = runner.invoke(
             app,
-            ["review", "--file", str(content_file), "--type", "article", "--format", "json"],
+            ["check", "--file", str(content_file), "--type", "article", "--format", "json"],
         )
 
     assert result.exit_code == 0
@@ -201,12 +201,12 @@ def test_cli_review_file_flag(tmp_path: Path):
     assert parsed["verdict"] == "FLAG"
 
 
-def test_cli_review_missing_file():
-    result = runner.invoke(app, ["review", "--file", "nonexistent.txt"])
+def test_cli_check_missing_file():
+    result = runner.invoke(app, ["check", "--file", "nonexistent.txt"])
     assert result.exit_code != 0
     assert "not found" in result.output.lower()
 
 
-def test_cli_review_no_input():
-    result = runner.invoke(app, ["review"])
+def test_cli_check_no_input():
+    result = runner.invoke(app, ["check"])
     assert result.exit_code != 0
