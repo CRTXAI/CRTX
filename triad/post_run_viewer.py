@@ -54,12 +54,14 @@ class PostRunViewer:
         *,
         on_improve=None,
         on_apply=None,
+        on_new_review=None,
     ) -> None:
         self.console = console
         self.session_dir = session_dir
         self.result = result
         self._on_improve = on_improve
         self._on_apply = on_apply
+        self._on_new_review = on_new_review
 
     def _build_menu(self) -> str:
         """Build the menu string dynamically based on available actions."""
@@ -73,6 +75,8 @@ class PostRunViewer:
             parts.append("[green]\\[i][/] Improve")
         if self._on_apply and getattr(self.result, "improve_result", None):
             parts.append("[green]\\[a][/] Apply")
+        if self._on_new_review:
+            parts.append("[green]\\[n][/] New review")
         parts.append("[green]\\[Enter][/] Exit")
         return "  ".join(parts)
 
@@ -111,6 +115,8 @@ class PostRunViewer:
                 self._handle_improve()
             elif key == "a":
                 self._handle_apply()
+            elif key == "n":
+                self._handle_new_review()
         return None
 
     def run_direct(self, view: str) -> None:
@@ -154,6 +160,34 @@ class PostRunViewer:
             self.console.print("[dim]No improved code to apply.[/dim]")
             return
         self._on_apply(self.result)
+
+    def _handle_new_review(self) -> None:
+        """Prompt for new files/spec and re-run the review pipeline."""
+        if not self._on_new_review:
+            return
+
+        self.console.print()
+        try:
+            files_input = input("Files (paths, globs, or directories): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if not files_input:
+            return
+
+        try:
+            spec_input = input("Spec file (optional, Enter to skip): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            spec_input = ""
+
+        new_files = files_input.split()
+        outcome = self._on_new_review(new_files, spec_input or None)
+        if outcome is None:
+            self.console.print("[red]Review failed.[/red]")
+            return
+
+        new_result, new_path = outcome
+        self.result = new_result
+        self.session_dir = Path(new_path)
 
     # ── Summary view ───────────────────────────────────────────────
 

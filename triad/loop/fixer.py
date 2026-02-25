@@ -13,7 +13,6 @@ from triad.loop.test_runner import TestReport
 from triad.providers.litellm_provider import LiteLLMProvider
 from triad.schemas.pipeline import ModelConfig
 
-
 FIX_SYSTEM_PROMPT = """\
 You are an expert Python debugger. Fix the specific issues reported below.
 
@@ -92,7 +91,7 @@ class CodeFixer:
             prompt_parts.append(f"\n# file: {fp}\n```python\n{code}\n```\n")
 
         if context_files:
-            prompt_parts.append("\nFULL CONTEXT (read-only — modify only if an import is missing):\n")
+            prompt_parts.append("\nFULL CONTEXT (read-only — modify only if an import is missing):\n")  # noqa: E501
             for fp, code in context_files.items():
                 prompt_parts.append(f"\n# file: {fp}\n```python\n{code}\n```\n")
 
@@ -202,9 +201,7 @@ class CodeFixer:
                 continue
             names: set[str] = set()
             for node in ast.iter_child_nodes(tree):
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    names.add(node.name)
-                elif isinstance(node, ast.ClassDef):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                     names.add(node.name)
                 elif isinstance(node, ast.Assign):
                     for target in node.targets:
@@ -243,7 +240,7 @@ class CodeFixer:
     def _find_model_config(
         model_id: str, registry: dict[str, ModelConfig],
     ) -> ModelConfig | None:
-        for key, cfg in registry.items():
+        for _, cfg in registry.items():
             if cfg.model == model_id:
                 return cfg
         if model_id in registry:

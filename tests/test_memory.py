@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import shutil
 from pathlib import Path
 from uuid import uuid4
 
@@ -10,7 +9,7 @@ import pytest
 from triad.memory.decision_log import DecisionLog
 from triad.memory.memory import Memory
 from triad.memory.patterns import PatternExtractor
-from triad.memory.schema import Decision, Pattern, TaxonomyRule
+from triad.memory.schema import Decision
 from triad.memory.taxonomy import DecisionTaxonomy
 
 
@@ -127,7 +126,7 @@ class TestPatternApproval:
         log = DecisionLog(tmp_memory_dir)
 
         # 6 approvals + 1 edit = 6/7 = 85.7% approval (>= 85% threshold)
-        for i in range(6):
+        for _ in range(6):
             log.record(_make_decision(decision="approve"))
         log.record(_make_decision(decision="edit"))
 
@@ -229,7 +228,7 @@ class TestTaxonomySkipDecrement:
     def test_skip_floor_at_zero(self, tmp_memory_dir: Path) -> None:
         tax = DecisionTaxonomy(tmp_memory_dir)
         tax.record_outcome("tweet", "ai-orchestration")  # streak = 1
-        tax.record_outcome("tweet", "ai-orchestration", human_decision="skip")  # 1 - 2 = 0 (clamped)
+        tax.record_outcome("tweet", "ai-orchestration", human_decision="skip")  # 1 - 2 = 0 (clamped)  # noqa: E501
 
         rule = tax._find_rule("tweet", "ai-orchestration")
         assert rule.consecutive_approvals == 0

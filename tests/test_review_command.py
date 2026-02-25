@@ -4,7 +4,6 @@ All LLM calls are mocked — no real API calls made in this suite.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 from typing import Any

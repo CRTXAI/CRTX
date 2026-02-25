@@ -2931,7 +2931,7 @@ def loop(
         original_run = orchestrator.run
 
         async def _run_with_override(prompt: str):
-            result_holder = []
+            _ = []
 
             orig_classify = orchestrator._router.classify
             def _classify_override(p):
@@ -3129,3 +3129,4 @@ def check_cmd(
 
 if __name__ == "__main__":
     app()
+

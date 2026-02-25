@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 from .decision_log import DecisionLog
 from .patterns import PatternExtractor
@@ -23,7 +22,7 @@ class Memory:
 
     def record(self, decision: Decision) -> None:
         """Classify revision, generate task_class, record to log, update taxonomy."""
-        if decision.decision == "edit" and decision.revision_notes and not decision.revision_category:
+        if decision.decision == "edit" and decision.revision_notes and not decision.revision_category:  # noqa: E501
             decision.revision_category = self._classify_revision(decision.revision_notes)
 
         if not decision.task_class:
@@ -56,7 +55,7 @@ class Memory:
             self.state.total_auto_ships += 1
         if decision.decision_source == "human" and decision.decision in ("edit", "skip"):
             self.state.total_human_overrides += 1
-        self.state.last_updated = datetime.now(timezone.utc).isoformat()
+        self.state.last_updated = datetime.now(UTC).isoformat()
         self._save_state()
 
     def update_decision_reason(self, decision_id: str, reason: str) -> bool:
@@ -66,17 +65,17 @@ class Memory:
     def classify(
         self,
         content_type: str,
-        niche_id: Optional[str] = None,
-        pillar_id: Optional[str] = None,
-        arbiter_confidence: Optional[float] = None,
-        arbiter_model: Optional[str] = None,
+        niche_id: str | None = None,
+        pillar_id: str | None = None,
+        arbiter_confidence: float | None = None,
+        arbiter_model: str | None = None,
     ) -> str:
         """Classify content via taxonomy. Returns 'auto_ship', 'flag', or 'pause'."""
         return self.taxonomy.classify(
             content_type, niche_id, pillar_id, arbiter_confidence, arbiter_model
         )
 
-    def get_patterns(self, niche_id: Optional[str] = None) -> list[Pattern]:
+    def get_patterns(self, niche_id: str | None = None) -> list[Pattern]:
         """Return active patterns, optionally filtered by niche."""
         patterns = self.extractor._load_patterns()
         active = [p for p in patterns if p.status == "active"]
@@ -90,15 +89,15 @@ class Memory:
     def get_generation_hints(
         self,
         content_type: str,
-        niche_id: Optional[str] = None,
-        pillar_id: Optional[str] = None,
+        niche_id: str | None = None,
+        pillar_id: str | None = None,
     ) -> dict:
         """Returns {avoid, emphasize, common_edits, performance_hint} from active patterns."""
         patterns = self.get_patterns(niche_id)
         avoid: list[str] = []
         emphasize: list[str] = []
         common_edits: list[str] = []
-        performance_hint: Optional[str] = None
+        performance_hint: str | None = None
 
         for p in patterns:
             conds = p.conditions
@@ -138,7 +137,7 @@ class Memory:
         retired = [p for p in patterns if p.status == "retired"]
 
         self.state.patterns = [asdict(p) for p in patterns]
-        self.state.last_updated = datetime.now(timezone.utc).isoformat()
+        self.state.last_updated = datetime.now(UTC).isoformat()
         self._save_state()
 
         return {
@@ -154,7 +153,7 @@ class Memory:
         count = self.log.ingest_existing_data(clawbucks_dir)
         if count > 0:
             self.state.total_decisions += count
-            self.state.last_updated = datetime.now(timezone.utc).isoformat()
+            self.state.last_updated = datetime.now(UTC).isoformat()
             self._save_state()
             self.learn()
         return count
@@ -179,8 +178,8 @@ class Memory:
         state_file = self.memory_dir / "memory.json"
         if not state_file.exists():
             state = MemoryState(
-                created_at=datetime.now(timezone.utc).isoformat(),
-                last_updated=datetime.now(timezone.utc).isoformat(),
+                created_at=datetime.now(UTC).isoformat(),
+                last_updated=datetime.now(UTC).isoformat(),
             )
             return state
         try:
@@ -189,8 +188,8 @@ class Memory:
             return MemoryState(**data)
         except (json.JSONDecodeError, TypeError, OSError):
             return MemoryState(
-                created_at=datetime.now(timezone.utc).isoformat(),
-                last_updated=datetime.now(timezone.utc).isoformat(),
+                created_at=datetime.now(UTC).isoformat(),
+                last_updated=datetime.now(UTC).isoformat(),
             )
 
     def _save_state(self) -> None:

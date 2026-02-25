@@ -3,9 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 from uuid import uuid4
 
 from .schema import Decision
@@ -24,12 +23,12 @@ class DecisionLog:
 
     def query(
         self,
-        content_type: Optional[str] = None,
-        niche_id: Optional[str] = None,
-        pillar_id: Optional[str] = None,
-        decision: Optional[str] = None,
-        since: Optional[str] = None,
-        limit: Optional[int] = None,
+        content_type: str | None = None,
+        niche_id: str | None = None,
+        pillar_id: str | None = None,
+        decision: str | None = None,
+        since: str | None = None,
+        limit: int | None = None,
     ) -> list[Decision]:
         """Filter and return decisions from the log."""
         results: list[Decision] = []
@@ -150,7 +149,7 @@ class DecisionLog:
             decision = Decision(
                 decision_id=str(uuid4()),
                 timestamp=draft.get("updated_at", draft.get("created_at",
-                                    datetime.now(timezone.utc).isoformat())),
+                                    datetime.now(UTC).isoformat())),
                 content_type=draft.get("type", "tweet"),
                 content_hash=content_hash,
                 content_preview=text[:200],

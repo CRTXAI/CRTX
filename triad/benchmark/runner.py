@@ -121,7 +121,7 @@ def _estimate_dev_time(vd: VerificationData, tier: str) -> float:
     return min(minutes, cap)
 
 
-def _build_verification(report: "TestReport", tier: str) -> VerificationData:
+def _build_verification(report: TestReport, tier: str) -> VerificationData:
     """Build VerificationData from a TestReport."""
     test_total = report.test_passed + report.test_failed + report.test_errors
 
@@ -134,7 +134,7 @@ def _build_verification(report: "TestReport", tier: str) -> VerificationData:
     import_errors = 0
     if not report.imports.passed and report.imports.details:
         lines = report.imports.details.strip().splitlines()
-        import_errors = len([l for l in lines if "import" in l.lower()])
+        import_errors = len([line for line in lines if "import" in line.lower()])
 
     vd = VerificationData(
         parse_passed=report.parse.passed,
@@ -188,7 +188,7 @@ class BenchmarkRunner:
                 f"[dim]({prompt.tier})[/dim]"
             )
 
-            for cond_name, cond_type, cond_config in self._conditions:
+            for cond_name, cond_type, cond_config in self._conditions:  # noqa: B007
                 self._console.print(
                     f"  [dim]Running {cond_name}...[/dim]", end=""
                 )
@@ -578,7 +578,7 @@ class BenchmarkRunner:
             input_tokens, output_tokens = token_estimates.get(
                 prompt.tier, (2000, 8000)
             )
-            for cond_name, cond_type, cond_config in self._conditions:
+            for cond_name, cond_type, cond_config in self._conditions:  # noqa: B007
                 if cond_type == "single":
                     if cond_config in self._registry:
                         cfg = self._registry[cond_config]
@@ -608,3 +608,4 @@ class BenchmarkRunner:
                         total += cost
 
         return total
+

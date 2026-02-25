@@ -11,7 +11,6 @@ from triad.loop.router import RouteDecision
 from triad.providers.litellm_provider import LiteLLMProvider
 from triad.schemas.pipeline import ModelConfig
 
-
 GENERATION_SYSTEM_PROMPT = """\
 You are an expert software engineer. Generate production-quality Python code.
 
@@ -134,7 +133,7 @@ class CodeGenerator:
     ) -> ModelConfig | None:
         """Find a ModelConfig by its LiteLLM model identifier or registry key."""
         # Try registry key first
-        for key, cfg in registry.items():
+        for _, cfg in registry.items():
             if cfg.model == model_id:
                 return cfg
         # Try direct key lookup

@@ -436,3 +436,153 @@ class TestImproveApplyOptions:
 
         callback.assert_called_once()
         assert viewer.result is mock_result
+
+
+class TestNewReviewOption:
+    """Tests for the [n] New review menu option."""
+
+    def test_menu_shows_new_review_when_callback(self, session_dir, mock_result):
+        """[n] appears in menu when on_new_review callback is present."""
+        mock_result.review_result = None
+        mock_result.improve_result = None
+        console = Console(quiet=True)
+        viewer = PostRunViewer(
+            console, session_dir, mock_result,
+            on_new_review=lambda files, spec: None,
+        )
+        menu = viewer._build_menu()
+        assert "[n]" in menu
+
+    def test_menu_hides_new_review_when_no_callback(self, session_dir, mock_result):
+        """[n] absent when on_new_review not provided."""
+        mock_result.review_result = None
+        mock_result.improve_result = None
+        console = Console(quiet=True)
+        viewer = PostRunViewer(console, session_dir, mock_result)
+        menu = viewer._build_menu()
+        assert "[n]" not in menu
+
+    def test_pressing_n_prompts_and_calls_callback(self, session_dir, mock_result):
+        """Pressing n prompts for files/spec and calls the callback."""
+        new_result = MagicMock()
+        new_result.review_result = None
+        new_result.improve_result = None
+        new_path = str(session_dir / "new_review")
+        (session_dir / "new_review").mkdir()
+
+        callback = MagicMock(return_value=(new_result, new_path))
+        console = Console(quiet=True)
+        viewer = PostRunViewer(
+            console, session_dir, mock_result,
+            on_new_review=callback,
+        )
+
+        with (
+            patch(_READ_KEY, side_effect=["n", "enter"]),
+            patch("builtins.input", side_effect=["src/a.py src/b.py", "spec.md"]),
+        ):
+            viewer.run()
+
+        callback.assert_called_once_with(["src/a.py", "src/b.py"], "spec.md")
+        assert viewer.result is new_result
+
+    def test_pressing_n_empty_files_skips(self, session_dir, mock_result):
+        """Pressing n then entering empty files does nothing."""
+        callback = MagicMock()
+        console = Console(quiet=True)
+        viewer = PostRunViewer(
+            console, session_dir, mock_result,
+            on_new_review=callback,
+        )
+
+        with (
+            patch(_READ_KEY, side_effect=["n", "enter"]),
+            patch("builtins.input", side_effect=[""]),
+        ):
+            viewer.run()
+
+        callback.assert_not_called()
+        assert viewer.result is mock_result
+
+    def test_pressing_n_skip_spec(self, session_dir, mock_result):
+        """Pressing n with files but empty spec passes None for spec."""
+        new_result = MagicMock()
+        new_result.review_result = None
+        new_result.improve_result = None
+        new_path = str(session_dir / "new_review")
+        (session_dir / "new_review").mkdir()
+
+        callback = MagicMock(return_value=(new_result, new_path))
+        console = Console(quiet=True)
+        viewer = PostRunViewer(
+            console, session_dir, mock_result,
+            on_new_review=callback,
+        )
+
+        with (
+            patch(_READ_KEY, side_effect=["n", "enter"]),
+            patch("builtins.input", side_effect=["src/*.py", ""]),
+        ):
+            viewer.run()
+
+        callback.assert_called_once_with(["src/*.py"], None)
+
+    def test_pressing_n_callback_failure_keeps_result(self, session_dir, mock_result):
+        """When callback returns None, result unchanged."""
+        callback = MagicMock(return_value=None)
+        console = Console(quiet=True)
+        viewer = PostRunViewer(
+            console, session_dir, mock_result,
+            on_new_review=callback,
+        )
+
+        with (
+            patch(_READ_KEY, side_effect=["n", "enter"]),
+            patch("builtins.input", side_effect=["src/a.py", ""]),
+        ):
+            viewer.run()
+
+        callback.assert_called_once()
+        assert viewer.result is mock_result
+
+    def test_pressing_n_without_callback_is_noop(self, session_dir, mock_result):
+        """No crash when n pressed with no callback."""
+        console = Console(quiet=True)
+        viewer = PostRunViewer(console, session_dir, mock_result)
+
+        with patch(_READ_KEY, side_effect=["n", "enter"]):
+            result = viewer.run()
+            assert result is None
+
+    def test_chain_multiple_reviews(self, session_dir, mock_result):
+        """Can press n multiple times to chain reviews."""
+        result_1 = MagicMock()
+        result_1.review_result = None
+        result_1.improve_result = None
+        path_1 = str(session_dir / "r1")
+        (session_dir / "r1").mkdir()
+
+        result_2 = MagicMock()
+        result_2.review_result = None
+        result_2.improve_result = None
+        path_2 = str(session_dir / "r2")
+        (session_dir / "r2").mkdir()
+
+        callback = MagicMock(side_effect=[(result_1, path_1), (result_2, path_2)])
+        console = Console(quiet=True)
+        viewer = PostRunViewer(
+            console, session_dir, mock_result,
+            on_new_review=callback,
+        )
+
+        with (
+            patch(_READ_KEY, side_effect=["n", "n", "enter"]),
+            patch("builtins.input", side_effect=[
+                "a.py", "",       # First review
+                "b.py", "spec.md",  # Second review
+            ]),
+        ):
+            viewer.run()
+
+        assert callback.call_count == 2
+        assert viewer.result is result_2

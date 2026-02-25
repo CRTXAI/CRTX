@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from triad.benchmark.prompts import BenchmarkPrompt
-from triad.providers.litellm_provider import LiteLLMProvider, extract_code_blocks
+from triad.providers.litellm_provider import LiteLLMProvider
 from triad.schemas.pipeline import ModelConfig
 
 # Standardised system prompt for all single-model benchmark runs.

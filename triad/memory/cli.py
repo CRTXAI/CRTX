@@ -19,7 +19,7 @@ def main(argv: list[str] | None = None) -> None:
 
     # ingest
     ingest_p = sub.add_parser("ingest", help="Ingest existing data")
-    ingest_p.add_argument("--clawbucks-dir", type=Path, default=Path.cwd(), help="Clawbucks directory")
+    ingest_p.add_argument("--clawbucks-dir", type=Path, default=Path.cwd(), help="Clawbucks directory")  # noqa: E501
 
     # learn
     sub.add_parser("learn", help="Run pattern extraction")
@@ -143,7 +143,7 @@ def _cmd_taxonomy(mem: Memory, args: argparse.Namespace) -> None:
         for r in report["rules"]:
             niche = r["niche_id"] or "*"
             pillar = r["pillar_id"] or "*"
-            print(f"  {r['content_type']:15s} {niche:20s} {pillar:25s} -> {r['action']:10s} (streak {r['streak']}/{r['required']}, cooldown {r['cooldown']})")
+            print(f"  {r['content_type']:15s} {niche:20s} {pillar:25s} -> {r['action']:10s} (streak {r['streak']}/{r['required']}, cooldown {r['cooldown']})")  # noqa: E501
 
 
 def _cmd_decisions(mem: Memory, args: argparse.Namespace) -> None:
@@ -163,7 +163,7 @@ def _cmd_decisions(mem: Memory, args: argparse.Namespace) -> None:
 
     print(f"Recent Decisions ({len(decisions)}):")
     for d in decisions:
-        preview = d.content_preview[:80] + "..." if len(d.content_preview) > 80 else d.content_preview
+        preview = d.content_preview[:80] + "..." if len(d.content_preview) > 80 else d.content_preview  # noqa: E501
         print(f"\n  [{d.decision:12s}] {d.content_type:10s} | {d.niche_id}")
         print(f"    {preview}")
         print(f"    Source: {d.decision_source}  Time: {d.timestamp[:19]}")

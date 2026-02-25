@@ -383,7 +383,7 @@ def _run_pytest_per_file(
                 env=env,
             )
         except subprocess.TimeoutExpired:
-            per_file_details.append(f"{tf}: COLLECTION FAILURE\npytest timed out ({pytest_timeout}s)")
+            per_file_details.append(f"{tf}: COLLECTION FAILURE\npytest timed out ({pytest_timeout}s)")  # noqa: E501
             continue
 
         output = result.stdout + "\n" + result.stderr

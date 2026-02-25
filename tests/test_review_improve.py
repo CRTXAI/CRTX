@@ -341,7 +341,7 @@ class TestFileReader:
 
         result = _read_source_files([str(f)])
 
-        assert "# file:" in result
+        assert "=== FILE:" in result
         assert "print('hello')" in result
 
     def test_reads_multiple_files(self, tmp_path):
@@ -384,6 +384,74 @@ class TestFileReader:
         with pytest.raises(Exit):
             _read_source_files([str(tmp_path / "nonexistent.py")])
 
+    def test_glob_pattern_expands(self, tmp_path):
+        """_read_source_files should expand glob patterns."""
+        from triad.cli import _read_source_files
+
+        (tmp_path / "a.py").write_text("a = 1", encoding="utf-8")
+        (tmp_path / "b.py").write_text("b = 2", encoding="utf-8")
+        (tmp_path / "c.txt").write_text("not matched", encoding="utf-8")
+
+        pattern = str(tmp_path / "*.py")
+        result = _read_source_files([pattern])
+
+        assert "a = 1" in result
+        assert "b = 2" in result
+        assert "not matched" not in result
+
+    def test_glob_no_matches_exits(self, tmp_path):
+        """_read_source_files should exit when glob matches nothing."""
+        from click.exceptions import Exit
+
+        from triad.cli import _read_source_files
+
+        pattern = str(tmp_path / "*.xyz")
+        with pytest.raises(Exit):
+            _read_source_files([pattern])
+
+    def test_absolute_path(self, tmp_path):
+        """_read_source_files should handle absolute paths."""
+        from triad.cli import _read_source_files
+
+        f = tmp_path / "abs_test.py"
+        f.write_text("absolute = True", encoding="utf-8")
+
+        result = _read_source_files([str(f.resolve())])
+
+        assert "absolute = True" in result
+
+    def test_mixed_files_and_globs(self, tmp_path):
+        """_read_source_files should handle mix of explicit files and globs."""
+        from triad.cli import _read_source_files
+
+        (tmp_path / "explicit.py").write_text("explicit = 1", encoding="utf-8")
+        subdir = tmp_path / "sub"
+        subdir.mkdir()
+        (subdir / "glob1.py").write_text("glob1 = 1", encoding="utf-8")
+        (subdir / "glob2.py").write_text("glob2 = 2", encoding="utf-8")
+
+        result = _read_source_files([
+            str(tmp_path / "explicit.py"),
+            str(subdir / "*.py"),
+        ])
+
+        assert "explicit = 1" in result
+        assert "glob1 = 1" in result
+        assert "glob2 = 2" in result
+
+    def test_file_markers_use_new_format(self, tmp_path):
+        """_read_source_files should use === FILE: === markers."""
+        from triad.cli import _read_source_files
+
+        f = tmp_path / "marker.py"
+        f.write_text("x = 1", encoding="utf-8")
+
+        result = _read_source_files([str(f)])
+
+        assert result.startswith("=== FILE:")
+        assert "===" in result
+        assert "# file:" not in result
+
 
 # ── CLI Command Tests ─────────────────────────────────────────────
 
@@ -408,6 +476,14 @@ class TestReviewCodeCLI:
         assert "--focus" in result.output
         assert "--preset" in result.output
         assert "--timeout" in result.output
+
+    def test_review_code_help_shows_spec_option(self):
+        """review-code --help should show the --spec option."""
+        from triad.cli import app
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["review-code", "--help"])
+        assert "--spec" in result.output
 
 
 class TestImproveCLI:

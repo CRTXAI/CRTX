@@ -3,9 +3,8 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from dataclasses import asdict
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Optional
 from uuid import uuid4
 
 from .decision_log import DecisionLog
@@ -47,7 +46,7 @@ class PatternExtractor:
             groups[key].append(d)
 
         patterns: list[Pattern] = []
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         for key, group in groups.items():
             if len(group) < MIN_SAMPLE_SIZE:
                 continue
@@ -59,7 +58,7 @@ class PatternExtractor:
                     discovered_at=now,
                     last_confirmed=now,
                     pattern_type="always_approve",
-                    description=f"Content ({key[0]}, {key[1]}, {key[2]}) approved {rate:.0%} of the time",
+                    description=f"Content ({key[0]}, {key[1]}, {key[2]}) approved {rate:.0%} of the time",  # noqa: E501
                     conditions={"content_type": key[0], "niche_id": key[1], "pillar_id": key[2]},
                     prediction="approve",
                     confidence=rate,
@@ -77,7 +76,7 @@ class PatternExtractor:
             groups[key].append(d)
 
         patterns: list[Pattern] = []
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         for key, group in groups.items():
             if len(group) < MIN_SAMPLE_SIZE:
                 continue
@@ -89,7 +88,7 @@ class PatternExtractor:
                     discovered_at=now,
                     last_confirmed=now,
                     pattern_type="always_edit",
-                    description=f"Content ({key[0]}, {key[1]}, {key[2]}) edited {rate:.0%} of the time",
+                    description=f"Content ({key[0]}, {key[1]}, {key[2]}) edited {rate:.0%} of the time",  # noqa: E501
                     conditions={"content_type": key[0], "niche_id": key[1], "pillar_id": key[2]},
                     prediction="edit",
                     confidence=rate,
@@ -106,7 +105,7 @@ class PatternExtractor:
             return []
 
         patterns: list[Pattern] = []
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         for threshold_int in range(99, 79, -1):
             threshold = threshold_int / 100.0
@@ -148,7 +147,7 @@ class PatternExtractor:
             groups[key].append(d)
 
         patterns: list[Pattern] = []
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         for key, group in groups.items():
             if len(group) < MIN_SAMPLE_SIZE:
                 continue
@@ -159,7 +158,7 @@ class PatternExtractor:
                     discovered_at=now,
                     last_confirmed=now,
                     pattern_type="high_performer",
-                    description=f"Content ({key[0]}, {key[1]}, {key[2]}) avg score {avg:.2f} vs mean {overall_mean:.2f}",
+                    description=f"Content ({key[0]}, {key[1]}, {key[2]}) avg score {avg:.2f} vs mean {overall_mean:.2f}",  # noqa: E501
                     conditions={"content_type": key[0], "niche_id": key[1], "pillar_id": key[2]},
                     prediction="high_performance",
                     confidence=avg / overall_mean,
@@ -172,7 +171,7 @@ class PatternExtractor:
                     discovered_at=now,
                     last_confirmed=now,
                     pattern_type="low_performer",
-                    description=f"Content ({key[0]}, {key[1]}, {key[2]}) avg score {avg:.2f} vs mean {overall_mean:.2f}",
+                    description=f"Content ({key[0]}, {key[1]}, {key[2]}) avg score {avg:.2f} vs mean {overall_mean:.2f}",  # noqa: E501
                     conditions={"content_type": key[0], "niche_id": key[1], "pillar_id": key[2]},
                     prediction="low_performance",
                     confidence=1 - (avg / overall_mean),
@@ -204,7 +203,7 @@ class PatternExtractor:
                     category_counts[category] += 1
 
         patterns: list[Pattern] = []
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         for category, count in category_counts.items():
             if count >= 3:
                 patterns.append(Pattern(
@@ -212,7 +211,7 @@ class PatternExtractor:
                     discovered_at=now,
                     last_confirmed=now,
                     pattern_type="edit_trigger",
-                    description=f"Edits frequently triggered by '{category}' issues ({count} times)",
+                    description=f"Edits frequently triggered by '{category}' issues ({count} times)",  # noqa: E501
                     conditions={"revision_category": category},
                     prediction="edit",
                     confidence=count / len(edited),
@@ -227,7 +226,7 @@ class PatternExtractor:
         new: list[Pattern],
     ) -> list[Pattern]:
         """Merge new patterns into existing. Update matches, add new, decay old."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         merged: dict[str, Pattern] = {}
 
         # Index existing by (pattern_type, conditions key)
@@ -256,7 +255,7 @@ class PatternExtractor:
             try:
                 last = datetime.fromisoformat(p.last_confirmed)
                 if last.tzinfo is None:
-                    last = last.replace(tzinfo=timezone.utc)
+                    last = last.replace(tzinfo=UTC)
                 age = now - last
                 if age > timedelta(days=_RETIRED_DAYS):
                     p.status = "retired"

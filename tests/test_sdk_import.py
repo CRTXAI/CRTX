@@ -17,14 +17,14 @@ def test_arbiter_import():
 
 
 def test_router_import():
-    from crtx import Router, RouteDecision, TaskComplexity
+    from crtx import RouteDecision, Router, TaskComplexity
     assert Router is not None
     assert RouteDecision is not None
     assert TaskComplexity is not None
 
 
 def test_providers_import():
-    from crtx import ModelProvider, LiteLLMProvider
+    from crtx import LiteLLMProvider, ModelProvider
     assert ModelProvider is not None
     assert LiteLLMProvider is not None
 

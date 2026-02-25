@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 from uuid import uuid4
 
 from .schema import TaxonomyRule
@@ -23,10 +22,10 @@ class DecisionTaxonomy:
     def classify(
         self,
         content_type: str,
-        niche_id: Optional[str] = None,
-        pillar_id: Optional[str] = None,
-        arbiter_confidence: Optional[float] = None,
-        arbiter_model: Optional[str] = None,
+        niche_id: str | None = None,
+        pillar_id: str | None = None,
+        arbiter_confidence: float | None = None,
+        arbiter_model: str | None = None,
     ) -> str:
         """Returns 'auto_ship', 'flag', or 'pause'."""
         if arbiter_confidence is not None and arbiter_confidence < 0.80:
@@ -59,8 +58,8 @@ class DecisionTaxonomy:
     def record_outcome(
         self,
         content_type: str,
-        niche_id: Optional[str] = None,
-        pillar_id: Optional[str] = None,
+        niche_id: str | None = None,
+        pillar_id: str | None = None,
         human_decision: str = "approve",
     ) -> None:
         """Update streak based on human decision."""
@@ -73,7 +72,7 @@ class DecisionTaxonomy:
         elif human_decision == "edit":
             rule.consecutive_approvals = 0
             rule.cooldown_after_edit = DEFAULT_COOLDOWN_AFTER_EDIT
-            rule.last_human_override = datetime.now(timezone.utc).isoformat()
+            rule.last_human_override = datetime.now(UTC).isoformat()
             rule.action = "flag"
         elif human_decision == "skip":
             rule.consecutive_approvals = max(0, rule.consecutive_approvals - 2)
@@ -121,9 +120,9 @@ class DecisionTaxonomy:
     def _find_rule(
         self,
         content_type: str,
-        niche_id: Optional[str] = None,
-        pillar_id: Optional[str] = None,
-    ) -> Optional[TaxonomyRule]:
+        niche_id: str | None = None,
+        pillar_id: str | None = None,
+    ) -> TaxonomyRule | None:
         """Find most specific matching rule: pillar > niche > global."""
         # Pillar-level match (most specific)
         if pillar_id:
@@ -159,8 +158,8 @@ class DecisionTaxonomy:
     def _find_or_create_rule(
         self,
         content_type: str,
-        niche_id: Optional[str] = None,
-        pillar_id: Optional[str] = None,
+        niche_id: str | None = None,
+        pillar_id: str | None = None,
     ) -> TaxonomyRule:
         """Find or create a rule with defaults."""
         rule = self._find_rule(content_type, niche_id, pillar_id)
@@ -169,7 +168,7 @@ class DecisionTaxonomy:
 
         rule = TaxonomyRule(
             rule_id=str(uuid4()),
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
             content_type=content_type,
             niche_id=niche_id,
             pillar_id=pillar_id,
@@ -187,7 +186,7 @@ class DecisionTaxonomy:
         """Count today's auto_ships from the rules (approximation from taxonomy state)."""
         # This counts rules currently set to auto_ship as a proxy.
         # In production, this would query the decision log for today's auto_ship decisions.
-        today = datetime.now(timezone.utc).date().isoformat()
+        today = datetime.now(UTC).date().isoformat()
         decisions_file = self.memory_dir / "decisions.jsonl"
         if not decisions_file.exists():
             return 0

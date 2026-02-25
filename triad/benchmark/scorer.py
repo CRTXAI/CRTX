@@ -21,7 +21,6 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
 # Weights for composite score (must sum to 1.0)
 _WEIGHTS = {
     "parse_rate": 0.20,
@@ -90,7 +89,7 @@ class BenchmarkScorer:
             return 0.0
 
         parsed = 0
-        for filepath, content in py_files.items():
+        for filepath, content in py_files.items():  # noqa: B007
             try:
                 ast.parse(content, filename=filepath)
                 parsed += 1
@@ -127,7 +126,7 @@ class BenchmarkScorer:
         py_files = {k: v for k, v in self._files.items() if k.endswith(".py")}
 
         # 1-2: Exact match on the configured entry_point name
-        for filepath, content in py_files.items():
+        for filepath, content in py_files.items():  # noqa: B007
             if Path(filepath).name == self._entry_point:
                 return filepath
             if filepath == self._entry_point:
@@ -138,7 +137,7 @@ class BenchmarkScorer:
             r'''if\s+__name__\s*==\s*['"]__main__['"]'''
         )
         candidates = []
-        for filepath, content in py_files.items():
+        for filepath, content in py_files.items():  # noqa: B007
             if "test" in filepath.lower():
                 continue
             if main_guard_re.search(content):
@@ -237,7 +236,7 @@ class BenchmarkScorer:
         total_funcs = 0
         annotated_funcs = 0
 
-        for filepath, content in py_files.items():
+        for filepath, content in py_files.items():  # noqa: B007
             try:
                 tree = ast.parse(content, filename=filepath)
             except SyntaxError:
@@ -267,7 +266,7 @@ class BenchmarkScorer:
         local_modules = self._build_local_module_set()
 
         succeeded = 0
-        for filepath, content in py_files.items():
+        for filepath, content in py_files.items():  # noqa: B007
             try:
                 tree = ast.parse(content, filename=filepath)
             except SyntaxError:
